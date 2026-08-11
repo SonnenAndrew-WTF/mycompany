@@ -66,11 +66,15 @@ WHEN countAddedFiles(ManufacturingOrder o) DO {
 }
 
 sendNotificationManufacturingOrderEmail(ManufacturingOrder o, Employee e, STRING s){
-    EMAIL
-        SUBJECT s
-        TO MasterData.email(e)
-        BODY s;
-    ;
+    TRY {
+        EMAIL
+            SUBJECT s
+            TO MasterData.email(e)
+            BODY s;
+        ;
+    } CATCH {
+        logToFile('ManufacturingOrderNotification', CONCAT '\n', (CONCAT ' : ', 'SendEmail order', number(o), name(e)), ' ERROR:', messageCaughtException());
+    }
 }
 
 sendNotificationManufacturingOrder(ManufacturingOrder o, STRING s)+{
@@ -93,7 +97,7 @@ DESIGN employee {
 }
 
 sendNotificationManufacturingOrderMessenger(ManufacturingOrder o, Employee e, STRING s){
-    sendMessage(chat(e), s);
+    sendMessageMaxTry(chat(e), s);
 }
 
 sendNotificationManufacturingOrder(ManufacturingOrder o, STRING s)+{
