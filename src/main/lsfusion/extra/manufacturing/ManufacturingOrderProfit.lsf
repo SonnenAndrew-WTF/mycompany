@@ -1,0 +1,26 @@
+MODULE ManufacturingOrderProfit;
+
+REQUIRE ManufacturingOrder, ManufacturingOrderScrap, ManufacturingOrderCost, ProjectManufacturingOrderTimeEntry;
+
+contractPrice 'Сумма по контракту' = DATA NUMERIC[14,2] (ManufacturingOrder);
+contractMargin 'Маржа' (o) = contractPrice(o) - totalCost(o) MATERIALIZED;
+contractMarginRate 'Маржинальность %' (o) = NUMERIC[14,2] (IF contractPrice(o) > 0 THEN (contractPrice(o) - totalCost(o)) / contractPrice(o) * 100) MATERIALIZED;
+hoursGenerated 'Генерация руб/час' (o) = NUMERIC[14,2] (IF ProjectManufacturing.hoursTimeEntry(o) > 0 THEN contractMargin(o) / ProjectManufacturing.hoursTimeEntry(o)) MATERIALIZED;
+
+EXTEND FORM manufacturingOrder
+    PROPERTIES(o) READONLYIF readonly(o)
+    contractPrice
+;
+
+DESIGN manufacturingOrder {
+    headerLeft {
+        MOVE PROPERTY(contractPrice(o)) AFTER PROPERTY (nameResponsible(o));
+    }
+}
+
+EXTEND FORM manufacturingOrders
+    PROPERTIES (o) READONLY contractPrice AFTER totalCost(o)
+    PROPERTIES (o) READONLY contractMargin AFTER contractPrice(o)
+    PROPERTIES (o) READONLY contractMarginRate AFTER contractMargin(o)
+    PROPERTIES (o) READONLY hoursGenerated AFTER contractMarginRate(o)
+;

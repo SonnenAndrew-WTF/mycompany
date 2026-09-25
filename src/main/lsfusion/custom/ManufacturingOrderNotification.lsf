@@ -30,14 +30,14 @@ cleanCommentText = FORMULA STRING 'btrim(regexp_replace(regexp_replace($1, \'</p
 
 textMessageComment(ManufacturingOrderComment c) = CONCAT '\n',
     '💬 Новый комментарий',
-    '📋 Заказ №' + number(manufacturingOrder(c)),
+    '📋 Заказ: ' + number(manufacturingOrder(c)),
     '👤 ' + fullName(user(c)),
     '',
     cleanCommentText(text(c));
 
 textMessageMention(ManufacturingOrderComment c) = CONCAT '\n',
     '💬 Упоминание',
-    '📋 Заказ №' + number(manufacturingOrder(c)),
+    '📋 Заказ: ' + number(manufacturingOrder(c)),
     '👤 ' + fullName(user(c)),
     '',
     cleanCommentText(text(c));
@@ -53,10 +53,10 @@ userAddedFiles (ManufacturingOrder o) = fullName(user(lastAddedFile(o)));
 
 textMessageFiles(ManufacturingOrder o) = CONCAT '\n',
     '📎 Добавлено файлов: ' + countAddedFiles(o),
-    '📋 Заказ №' + number(o),
-    '👤 ' + userAddedFiles(o),
-    '',
-    namesAddedFiles(o);
+    '📋 Заказ: ' + number(o),
+    '👤 ' + userAddedFiles(o);
+    //'',
+    //namesAddedFiles(o); - временно закоментировал, пользователи не могут определиться нужен им перечень файлов или нет...
 
 WHEN SETCHANGED (text(ManufacturingOrderComment c)) AND ManufacturingOrder o = manufacturingOrder(c) DO sendNotificationManufacturingOrder(o, textMessageComment(c));
 

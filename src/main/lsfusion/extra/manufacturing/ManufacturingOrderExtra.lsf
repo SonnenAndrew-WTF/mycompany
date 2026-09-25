@@ -1,6 +1,6 @@
 MODULE ManufacturingOrderExtra;
 
-REQUIRE ManufacturingOrder;
+REQUIRE ManufacturingOrder, ManufacturingOrderScrap;
 
 planeDateTime 'Плановое Завершение' = DATA DATE (ManufacturingOrder) IN id;
 
@@ -25,4 +25,19 @@ EXTEND FORM manufacturingOrder
     PROPERTIES (of) statusMfgFile AFTER description(of)
 ;
 
+DESIGN manufacturingOrder {
+    GRID(sc) { size = (100, 200); }
+}
+
+DESIGN manufacturingOrder {
+    preview {
+        width = 100;
+        height = 800;
+        fill = 0.5;
+    }
+}
+
+EXTEND FORM manufacturingOrders
+    PROPERTIES (o) READONLY nameResponsible AFTER imagedNameStatus(o)
+;
 
