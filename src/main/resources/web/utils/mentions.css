@@ -1,0 +1,138 @@
+/* Mentions feed (#5280) — CUSTOM 'mentionFeed' on the mentions form, opened as a form
+   tab from the toolbar rail (like the chat button). Visual language mirrors comments.css
+   (same avatars, message bubbles and theme variables), so light and dark themes both work. */
+
+.mnt-feed {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 8px;
+    background: var(--component-background-color);
+    color: var(--text-color);
+    font-size: 13px;
+}
+.mnt-feed * { box-sizing: border-box; }
+
+/* ---------- empty state ---------- */
+.mnt-empty {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 32px 12px;
+    color: var(--null-value-string-color);
+    font-weight: 600;
+}
+.mnt-empty i { font-size: 26px; opacity: .65; }
+
+/* ---------- single mention ---------- */
+.mnt-row {
+    position: relative;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 9px 10px;
+    /* crisp horizontal separators between notifications */
+    border-bottom: 1px solid var(--panel-border-color);
+    cursor: pointer;
+    transition: background .12s;
+}
+.mnt-feed .mnt-row:last-child { border-bottom: none; }
+.mnt-row:hover {
+    background: color-mix(in srgb, var(--null-value-string-color) 11%, transparent);
+}
+/* read rows carry a neutral shading, unread rows are accented (Kaiten-style) */
+.mnt-row {
+    background: color-mix(in srgb, var(--null-value-string-color) 6%, transparent);
+}
+.mnt-row.mnt-unread {
+    background: color-mix(in srgb, var(--focus-color) 10%, transparent);
+}
+.mnt-row.mnt-unread:hover {
+    background: color-mix(in srgb, var(--focus-color) 15%, transparent);
+}
+/* accent bar on the left edge of unread rows */
+.mnt-row.mnt-unread::before {
+    content: "";
+    position: absolute;
+    left: 2px;
+    top: 12px;
+    bottom: 12px;
+    width: 3px;
+    border-radius: 2px;
+    background: var(--focus-color);
+}
+
+.mnt-main {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.mnt-head {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 2px;
+}
+.mnt-author {
+    font-weight: 700;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mnt-time {
+    font-size: 11.5px;
+    font-weight: 600;
+    color: var(--null-value-string-color);
+    white-space: nowrap;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+/* the object the comment was left on — Kaiten's card link */
+.mnt-target {
+    display: block;
+    max-width: 100%;
+    margin: 1px 0 3px;
+    color: var(--focus-color);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.mnt-target:hover { text-decoration: underline; }
+
+/* @mention chips inside the rendered comment body (the comment editor and the
+   comment list have their own scoped rules; this is the feed's) */
+.mnt-feed .mention {
+    background-color: var(--selection-color);
+    color: var(--focus-color);
+    border-radius: 4px;
+    padding: 0 3px;
+    white-space: nowrap;
+}
+
+/* ---------- read / unread envelope (Kaiten's mark) ---------- */
+.mnt-env {
+    flex: 0 0 auto;
+    border: none;
+    background: transparent;
+    border-radius: 6px;
+    width: 24px;
+    height: 24px;
+    padding: 0;
+    cursor: pointer;
+    color: var(--null-value-string-color);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    line-height: 1;
+    transition: color .12s, background .12s;
+}
+.mnt-row.mnt-unread .mnt-env { color: var(--focus-color); }
+.mnt-env:hover { background: var(--component-hover-background-color); }

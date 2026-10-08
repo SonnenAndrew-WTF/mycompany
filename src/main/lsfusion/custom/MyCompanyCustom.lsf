@@ -15,4 +15,4 @@ REQUIRE Eval, ProcessMonitor, Backup, Chat, OpenAI, Documentation, SQLUtils,
         Fleet,
         BillReceiptCost, BillReceiptCostService, // initialize after Purchase
         
-        ChatCustom, MaxMessenger, ManufacturingOrderNotification;
+        ChatCustom, MaxMessenger, ManufacturingOrderNotification, MentionsFeed;
