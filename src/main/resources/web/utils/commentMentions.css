@@ -1,0 +1,12 @@
+/* The '@' (mention) button is added by commentMentions.js as a text glyph, not an
+   SVG icon, so the base icon recolor rules don't reach it — give the glyph the
+   same base/hover colors and size it to sit evenly among the toolbar icons. */
+.comment-editor .ql-snow .ql-toolbar button.ql-at { color: var(--text-color); }
+.comment-editor .ql-snow .ql-toolbar button.ql-at:hover,
+.comment-editor .ql-snow .ql-toolbar button.ql-at:focus,
+.comment-editor .ql-snow .ql-toolbar button.ql-at.ql-active { color: var(--focus-color); }
+.comment-editor .ql-snow .ql-toolbar button.ql-at {
+    font-size: 18px;
+    font-weight: 600;
+    line-height: 1;
+}
