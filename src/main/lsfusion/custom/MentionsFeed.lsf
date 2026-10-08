@@ -34,6 +34,10 @@ feedUnread 'Непрочитано' (CommentMention r) = NOT readComment(current
 
 countUnreadMentions 'Непрочитанные упоминания' (CustomUser u) = GROUP SUM 1 IF commentObj(CommentMention r) AND feedUser(r) = u AND NOT readComment(u, r);
 
+getUnreadMentionsCount () {
+    EXPORT JSON FROM count = (OVERRIDE countUnreadMentions(currentUser()), 0);
+} @@api;
+
 openMention 'Перейти' (CommentMention r) {
     readComment(currentUser(), r) <- TRUE;
     APPLY;
@@ -71,6 +75,8 @@ FORM mentions 'Упоминания'
     PROPERTIES markAllMentionsRead()
     FILTERS feedUser(c) = currentUser() AND commentObj(c)
     ORDERS feedMoment(c) DESC
+
+    EVENTS ON SCHEDULE PERIOD 15 formRefresh()
 ;
 
 DESIGN mentions {

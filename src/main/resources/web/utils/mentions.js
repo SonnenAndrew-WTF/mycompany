@@ -96,6 +96,8 @@ function mentionFeed() {
             let root = element.feed;
             const i18n = (options && options.i18n) || {};
             const txt = (key, fallback) => (i18n[key] != null ? i18n[key] : fallback);
+            // the row actions change read marks, so the toolbar badge needs a nudge to catch up
+            function touchBadge() { if (window.mntBadgeRefresh) setTimeout(window.mntBadgeRefresh, 1500); }
             while (root.lastElementChild) root.removeChild(root.lastElementChild);
 
             if (!list || !list.length) {
@@ -152,6 +154,7 @@ function mentionFeed() {
                     target.addEventListener("click", function (e) {
                         e.stopPropagation();
                         controller.changeProperty("c.open", item);
+                        touchBadge();
                     });
                     main.appendChild(target);
                 }
@@ -170,11 +173,13 @@ function mentionFeed() {
                 env.addEventListener("click", function (e) {
                     e.stopPropagation();
                     controller.changeProperty("c.toggle", item);
+                    touchBadge();
                 });
                 row.appendChild(env);
 
                 row.addEventListener("click", function () {
                     controller.changeProperty("c.open", item);
+                    touchBadge();
                 });
 
                 root.appendChild(row);
@@ -184,3 +189,40 @@ function mentionFeed() {
         }
     }
 }
+
+// Live toolbar badge: the web client reads navigator captions once per page load, so the
+// unread count is polled over the API and patched into the badge span (found by the
+// "Упоминания" caption text around it, matching the badged() caption in MentionsFeed.lsf).
+// The API is at the site root (/exec/...), same origin the client itself is served from.
+(function () {
+    function refresh() {
+        fetch("/exec/MentionsFeed.getUnreadMentionsCount")
+            .then(function (r) {
+                if (!r.ok) console.warn("mentions badge: HTTP " + r.status);
+                return r.ok ? r.json() : null;
+            })
+            .then(function (d) {
+                if (!d) return;
+                let n = (Array.isArray(d) ? d[0] : d) || {};
+                n = n.count || 0;
+                document.querySelectorAll(".badge").forEach(function (b) {
+                    let wrap = b.parentElement;
+                    if (wrap && wrap.textContent.indexOf("Упоминания") !== -1) {
+                        if (n > 0) {
+                            b.textContent = n;
+                            b.style.display = "";
+                        } else {
+                            b.style.display = "none";
+                        }
+                    }
+                });
+            })
+            .catch(function (e) {
+                console.warn("mentions badge: " + e);
+            });
+    }
+    window.mntBadgeRefresh = refresh;
+    setInterval(refresh, 20000);
+    window.addEventListener("focus", refresh);
+    refresh();
+})();

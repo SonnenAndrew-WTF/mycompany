@@ -23,7 +23,11 @@
                 // this button, so the tooltip is the English fallback
                 button.title = 'Mention user';
                 button.setAttribute('aria-label', button.title);
-                container.insertBefore(button, container.querySelector('button.ql-clean'));
+                // Quill 2 wraps toolbar buttons in <span class="ql-formats"> groups, so the
+                // button must go into the clean button's PARENT — inserting into the
+                // container itself throws (the reference node is not a child of it)
+                var clean = container.querySelector('button.ql-clean');
+                (clean ? clean.parentNode : container).insertBefore(button, clean);
 
                 // Insert the mention trigger at the caret and open the same user dropdown
                 // as typing '@' with the keyboard: quill-mention's own openMenu() does both
