@@ -1,0 +1,202 @@
+MODULE MentionsFeed;
+
+REQUIRE Comments, Icon,
+        Accounting, Inventory, InvoicingInventory, Purchase, Sales,
+        Manufacturing, ProjectManagement, HumanResources, CRM, Fleet,
+        Lead, Task, Project, Partner, Item, Contract, Vehicle, Application,
+        EmployeeCommentExtension, Bom, WorkOrder, ManufacturingOrder, Payslip,
+        Adjustment, Receipt, Scrap, Shipment, Bill, Invoice,
+        IncomingPayment, OutgoingPayment, JournalEntry, Asset,
+        PurchaseOrder, PurchasePricelist, SalesOrder, SalesPricelist;
+
+onWebClientInit() + {
+    onWebClientInit('mentions.css') <- 3;
+    onWebClientInit('mentions.js') <- 3;
+}
+
+CLASS ABSTRACT CommentMention 'Mention';
+
+feedUser 'User' = DATA CustomUser (CommentMention) INDEXED;
+feedMoment 'Date' = DATA DATETIME (CommentMention);
+feedAuthor 'Author' = DATA User (CommentMention);
+
+commentObj 'Object' = ABSTRACT Object (CommentMention);
+
+feedAuthorName 'Author' (CommentMention r) = name(feedAuthor(r));
+feedAvatar 'Avatar' (CommentMention r) = avatarBase64(feedAuthor(r));
+feedAgo 'Date' (CommentMention r) = textTimeDuration(feedMoment(r));
+
+feedText 'Text' = ABSTRACT HTMLTEXT (CommentMention);
+feedTargetText 'Object' = ABSTRACT TEXT (CommentMention);
+
+readComment 'Прочитано' = DATA BOOLEAN (CustomUser, CommentMention);
+feedUnread 'Непрочитано' (CommentMention r) = NOT readComment(currentUser(), r);
+
+countUnreadMentions 'Непрочитанные упоминания' (CustomUser u) = GROUP SUM 1 IF commentObj(CommentMention r) AND feedUser(r) = u AND NOT readComment(u, r);
+
+getUnreadMentionsCount () {
+    EXPORT JSON FROM count = (OVERRIDE countUnreadMentions(currentUser()), 0);
+} @@api;
+
+openMention 'Перейти' (CommentMention r) {
+    readComment(currentUser(), r) <- TRUE;
+    APPLY;
+    formEditObject(commentObj(r));
+}
+
+toggleReadMention 'Прочитано' (CommentMention r) {
+    IF readComment(currentUser(), r) THEN
+        readComment(currentUser(), r) <- NULL;
+    ELSE
+        readComment(currentUser(), r) <- TRUE;
+    APPLY;
+}
+
+markAllMentionsRead 'Отметить все прочитанными' () {
+    FOR feedUser(CommentMention r) = currentUser() AND NOT readComment(currentUser(), r) DO
+        readComment(currentUser(), r) <- TRUE;
+    APPLY;
+}
+
+mentionsI18n () = JSON FROM
+    empty = 'Упоминаний нет',
+    emptyIcon = 'bi-at',
+    openHint = 'Перейти к объекту',
+    markRead = 'Отметить прочитанным',
+    markUnread = 'Отметить непрочитанным';
+
+FORM mentions 'Упоминания'
+    OBJECTS c = CommentMention CUSTOM 'mentionFeed' OPTIONS JSON FROM i18n = mentionsI18n()
+    PROPERTIES(c) avatar = feedAvatar, author = feedAuthorName,
+                   ago = feedAgo, date = feedMoment,
+                   text = feedText, target = feedTargetText,
+                   unread = feedUnread
+    PROPERTIES(c) open = openMention, toggle = toggleReadMention
+    PROPERTIES markAllMentionsRead()
+    FILTERS feedUser(c) = currentUser() AND commentObj(c)
+    ORDERS feedMoment(c) DESC
+
+    EVENTS ON SCHEDULE PERIOD 15 formRefresh()
+;
+
+DESIGN mentions {
+    NEW header {
+        horizontal = TRUE;
+        MOVE PROPERTY(markAllMentionsRead());
+    }
+    MOVE GRID(c) {
+        fill = 1;
+    }
+    REMOVE BOX(c);
+}
+
+NAVIGATOR {
+    NEW mentions WINDOW toolbar HEADER badged('Упоминания', (OVERRIDE countUnreadMentions(currentUser()), 0)) LAST;
+}
+
+META mentionFeed (cmt, pfx)
+    CLASS ###pfx##Mention : CommentMention;
+
+    comment = DATA ###cmt (###pfx##Mention) NONULL INDEXED;
+    feedText (###pfx##Mention r) += html(comment(r));
+
+    syncMentions (###cmt c) {
+        FOR comment(###pfx##Mention r) = c DO
+            DELETE r;
+        FOR mentioned(c, CustomUser u) DO
+            NEW r = ###pfx##Mention {
+                comment(r) <- c;
+                feedUser(r) <- u;
+                feedMoment(r) <- dateTime(c);
+                feedAuthor(r) <- user(c);
+            }
+    }
+
+    // any text change recreates the rows: an edited comment resurfaces, read marks reset
+    WHEN SET(###cmt c IS ###cmt) DO syncMentions(c);
+    WHEN CHANGED(text(###cmt c)) DO syncMentions(c);
+END
+
+@mentionFeed(LeadComment, lead);
+@mentionFeed(TaskComment, task);
+@mentionFeed(ProjectComment, project);
+@mentionFeed(PartnerComment, partner);
+@mentionFeed(ItemComment, item);
+@mentionFeed(ContractComment, contract);
+@mentionFeed(VehicleComment, vehicle);
+@mentionFeed(ApplicationComment, application);
+@mentionFeed(EmployeeComment, employee);
+@mentionFeed(BomComment, bom);
+@mentionFeed(WorkOrderComment, workOrder);
+@mentionFeed(ManufacturingOrderComment, manufacturingOrder);
+@mentionFeed(PayslipComment, payslip);
+@mentionFeed(AdjustmentComment, adjustment);
+@mentionFeed(ReceiptComment, receipt);
+@mentionFeed(ScrapComment, scrap);
+@mentionFeed(ShipmentComment, shipment);
+@mentionFeed(BillComment, bill);
+@mentionFeed(InvoiceComment, invoice);
+@mentionFeed(IncomingPaymentComment, incomingPayment);
+@mentionFeed(OutgoingPaymentComment, outgoingPayment);
+@mentionFeed(JournalEntryComment, journalEntry);
+@mentionFeed(AssetComment, asset);
+@mentionFeed(Purchase.OrderComment, purchaseOrder);
+@mentionFeed(Purchase.PricelistComment, purchasePricelist);
+@mentionFeed(Sales.OrderComment, salesOrder);
+@mentionFeed(Sales.PricelistComment, salesPricelist);
+
+// base link property is named after the entity class (CRM.lead, Purchase.order, ...); a metacode can't build qualified names
+commentObj (LeadMention r) += CRM.lead(comment(r));
+feedTargetText (LeadMention r) += name(CRM.lead(comment(r)));
+commentObj (TaskMention r) += ProjectManagement.task(comment(r));
+feedTargetText (TaskMention r) += name(ProjectManagement.task(comment(r)));
+commentObj (ProjectMention r) += ProjectManagement.project(comment(r));
+feedTargetText (ProjectMention r) += name(ProjectManagement.project(comment(r)));
+commentObj (PartnerMention r) += MasterData.partner(comment(r));
+feedTargetText (PartnerMention r) += name(MasterData.partner(comment(r)));
+commentObj (ItemMention r) += MasterData.item(comment(r));
+feedTargetText (ItemMention r) += name(MasterData.item(comment(r)));
+commentObj (ContractMention r) += MasterData.contract(comment(r));
+feedTargetText (ContractMention r) += name(MasterData.contract(comment(r)));
+commentObj (VehicleMention r) += Fleet.vehicle(comment(r));
+feedTargetText (VehicleMention r) += name(Fleet.vehicle(comment(r)));
+commentObj (ApplicationMention r) += HumanResources.application(comment(r));
+feedTargetText (ApplicationMention r) += name(HumanResources.application(comment(r)));
+commentObj (EmployeeMention r) += MasterData.employee(comment(r));
+feedTargetText (EmployeeMention r) += name(MasterData.employee(comment(r)));
+commentObj (BomMention r) += Manufacturing.bom(comment(r));
+feedTargetText (BomMention r) += name(Manufacturing.bom(comment(r)));
+commentObj (WorkOrderMention r) += Manufacturing.workOrder(comment(r));
+feedTargetText (WorkOrderMention r) += name(Manufacturing.workOrder(comment(r)));
+commentObj (ManufacturingOrderMention r) += Manufacturing.manufacturingOrder(comment(r));
+feedTargetText (ManufacturingOrderMention r) += numberDate(Manufacturing.manufacturingOrder(comment(r)));
+commentObj (PayslipMention r) += Payroll.payslip(comment(r));
+feedTargetText (PayslipMention r) += nameEmployee(Payroll.payslip(comment(r)));
+commentObj (AdjustmentMention r) += Inventory.adjustment(comment(r));
+feedTargetText (AdjustmentMention r) += numberDate(Inventory.adjustment(comment(r)));
+commentObj (ReceiptMention r) += Inventory.receipt(comment(r));
+feedTargetText (ReceiptMention r) += numberDate(Inventory.receipt(comment(r)));
+commentObj (ScrapMention r) += Inventory.scrap(comment(r));
+feedTargetText (ScrapMention r) += numberDate(Inventory.scrap(comment(r)));
+commentObj (ShipmentMention r) += Inventory.shipment(comment(r));
+feedTargetText (ShipmentMention r) += numberDate(Inventory.shipment(comment(r)));
+commentObj (BillMention r) += Invoicing.bill(comment(r));
+feedTargetText (BillMention r) += numberDate(Invoicing.bill(comment(r)));
+commentObj (InvoiceMention r) += Invoicing.invoice(comment(r));
+feedTargetText (InvoiceMention r) += numberDate(Invoicing.invoice(comment(r)));
+commentObj (IncomingPaymentMention r) += Invoicing.incomingPayment(comment(r));
+feedTargetText (IncomingPaymentMention r) += numberDate(Invoicing.incomingPayment(comment(r)));
+commentObj (OutgoingPaymentMention r) += Invoicing.outgoingPayment(comment(r));
+feedTargetText (OutgoingPaymentMention r) += numberDate(Invoicing.outgoingPayment(comment(r)));
+commentObj (JournalEntryMention r) += Accounting.journalEntry(comment(r));
+feedTargetText (JournalEntryMention r) += description(Accounting.journalEntry(comment(r)));
+commentObj (AssetMention r) += Accounting.asset(comment(r));
+feedTargetText (AssetMention r) += nameItem(Accounting.asset(comment(r)));
+commentObj (PurchaseOrderMention r) += Purchase.order(comment(r));
+feedTargetText (PurchaseOrderMention r) += numberDate(Purchase.order(comment(r)));
+commentObj (PurchasePricelistMention r) += Purchase.pricelist(comment(r));
+feedTargetText (PurchasePricelistMention r) += numberDate(Purchase.pricelist(comment(r)));
+commentObj (SalesOrderMention r) += Sales.order(comment(r));
+feedTargetText (SalesOrderMention r) += numberDate(Sales.order(comment(r)));
+commentObj (SalesPricelistMention r) += Sales.pricelist(comment(r));
+feedTargetText (SalesPricelistMention r) += numberDate(Sales.pricelist(comment(r)));

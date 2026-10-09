@@ -1,0 +1,12 @@
+MODULE CommentMentions;
+
+REQUIRE Comments;
+
+// The '@' button for the comment editor toolbar (#5279) as an OVERLAY: comments.js
+// is a base file and must not be modified, so the button is injected by a separate
+// script (commentMentions.js) that wraps window.Quill; this module only loads the
+// script and its styles after the base editor files (comments.js is <- 2).
+onWebClientInit() + {
+    onWebClientInit('commentMentions.css') <- 4;
+    onWebClientInit('commentMentions.js') <- 4;
+}
