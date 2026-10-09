@@ -168,7 +168,7 @@ DESIGN receipt {
     }
 }
 
-edit (ReceiptLine l) + { SHOW receipt OBJECTS r = receipt(l), l = l DOCKED; }
+edit (ReceiptLine l) + { SHOW receipt OBJECTS r = receipt(l), l = l WINDOW; }
 
 // receipts
 background = ABSTRACT CASE COLOR (Receipt);
@@ -207,7 +207,7 @@ immediateReceipt 'Immediate receipt' () {
     NEWSESSION {
         NEW r = Receipt {
             immediate(r) <- TRUE;
-            DIALOG receipt OBJECTS r = r DOCKED DO seek(r);
+            DIALOG receipt OBJECTS r = r WINDOW DO seek(r);
         }
     }
 } IMAGE 'add.png';
@@ -231,10 +231,13 @@ clone(Receipt to, Receipt from) {
 }
 
 copy 'Copy' (Receipt from) { 
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW to = Receipt {
             clone(to, from);
-            SHOW receipt OBJECTS r = to DOCKED;
+            SHOW receipt OBJECTS r = to WINDOW;
         }
     }
 }

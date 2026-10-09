@@ -33,6 +33,9 @@ EXTEND FORM shipment
 
 // Shipment
 return 'Return' (Receipt r) {    
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW ns = Shipment {
             type(ns) <- shipmentType(type(r));
@@ -45,7 +48,7 @@ return 'Return' (Receipt r) {
                 product(nl) <- product(l);
                 initialDemand(nl) <- done(l);
             }
-            SHOW shipment OBJECTS s = ns DOCKED;
+            SHOW shipment OBJECTS s = ns WINDOW;
         }
     }
 }

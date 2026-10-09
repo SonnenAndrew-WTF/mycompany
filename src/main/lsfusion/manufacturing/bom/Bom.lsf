@@ -172,6 +172,9 @@ extraCopy ABSTRACT LIST (Bom, Bom);
 extraCopy ABSTRACT LIST (ComponentLine, ComponentLine);
 
 copy 'Copy' (Bom b) {
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW nb = Bom {
             name(nb) <- name(b);
@@ -195,7 +198,7 @@ copy 'Copy' (Bom b) {
             
             extraCopy(b, nb);
             
-            SHOW bom OBJECTS b = nb DOCKED;
+            SHOW bom OBJECTS b = nb WINDOW;
         }
     }
 }

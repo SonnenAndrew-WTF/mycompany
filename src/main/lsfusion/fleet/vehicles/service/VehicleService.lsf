@@ -109,10 +109,13 @@ clone (VehicleService to, VehicleService from) + {
 }
 
 copy 'Copy' (VehicleService from)  {
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW to = VehicleService {
             clone(to, from);
-            SHOW vehicleService OBJECTS s = to DOCKED;
+            SHOW vehicleService OBJECTS s = to WINDOW;
         }
     }
 }

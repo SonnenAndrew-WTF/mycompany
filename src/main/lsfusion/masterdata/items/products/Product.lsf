@@ -15,6 +15,9 @@ countryOrigin 'Country of origin'  = DATA Country (Product);
 nameCountryOrigin 'Country of origin' (Product p) = name(countryOrigin(p));
 
 copy 'Copy' (Product p) {
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW np = Product {
             weight(np) <- weight(p);
@@ -70,7 +73,7 @@ newProduct 'Product' (Category c) {
     NEWSESSION {
         NEW p = Product {
             category(p) <- c;
-            DIALOG item OBJECTS i = p DOCKED DO seek(p);
+            DIALOG item OBJECTS i = p WINDOW DO seek(p);
         }
     }
 } IMAGE 'add.png' CHANGEKEY 'INSERT' HIDE;
@@ -79,7 +82,7 @@ newProduct 'Product' (ISTRING[200] name) {
     NEW p = Product {
         category(p) <- rootCategory();
         dataName(p) <- name;
-        DIALOG item OBJECTS i = p INPUT DOCKED;
+        DIALOG item OBJECTS i = p INPUT WINDOW;
     }
 }
 
