@@ -5,7 +5,7 @@ REQUIRE Location, Product, Utils, CostProduct, ItemCost;
 NAMESPACE Inventory;
 
 CLASS CostLedger 'Cost ledger';
-class 'Type' (CostLedger l) = objectClassName(l) IF l IS CostLedger CHARWIDTH 15;
+class 'Type' (CostLedger l) = className(l) IF l IS CostLedger CHARWIDTH 15;
 
 type 'Type' = ABSTRACT ISTRING[100] (CostLedger) CHARWIDTH 20 MATERIALIZED;
 
@@ -89,6 +89,8 @@ prevCostPrice 'Unit cost' (Location l, Product p, DATETIME dt) = PREV(costPrice(
 
 costQuantity '{Quantity}' (Product p) = GROUP SUM costQuantity(Location l, p);
 costAmount 'Cost' (Product p) = GROUP SUM costAmount(Location l, p);
+costAmount 'Cost' (Location l) = GROUP SUM costAmount(l, Product p);
+costAmount 'Cost' () = GROUP SUM costAmount(Location l, Product p);
 costPrice 'Unit cost' (Product p) = costAmount(p) / costQuantity(p);
 
 costQuantity '{Quantity}' (Product p, DATETIME dt) = GROUP SUM costQuantity(Location l, p, dt);

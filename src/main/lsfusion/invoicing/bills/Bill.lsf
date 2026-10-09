@@ -327,10 +327,13 @@ clone (Bill to, Bill from) + {
 }
 
 copy 'Copy' (Bill from)  { 
+    APPLY;
+    IF canceled() THEN RETURN;
+
     NEWSESSION {
         NEW to = Bill {
             clone(to, from);
-            SHOW bill OBJECTS b = to DOCKED;
+            SHOW bill OBJECTS b = to WINDOW;
         }
     }
 }
