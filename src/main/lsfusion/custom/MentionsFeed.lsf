@@ -26,6 +26,29 @@ feedAuthorName 'Author' (CommentMention r) = name(feedAuthor(r));
 feedAvatar 'Avatar' (CommentMention r) = avatarBase64(feedAuthor(r));
 feedAgo 'Date' (CommentMention r) = textTimeDuration(feedMoment(r));
 
+pad2 (INTEGER n) = IF n < 10 THEN '0' + STRING(n) ELSE STRING(n);
+fmtDateTime (DATETIME dt) = CONCAT '',
+    pad2(extractDay(dt)), '.', pad2(extractMonthNumber(dt)), '.', STRING(extractYear(dt)), ' ',
+    pad2(extractHour(dt)), ':', pad2(extractMinute(dt));
+
+feedDate 'Date' (CommentMention r) = fmtDateTime(feedMoment(r));
+
+// same "number (date)" layout as numberDate in the base modules, but with the
+// dd.MM.yyyy HH:mm format of the feed date column
+feedNumberDate (Manufacturing.ManufacturingOrder o) = number(o) + ' (' + fmtDateTime(scheduledDateTime(o)) + ')';
+feedNumberDate (Inventory.Adjustment o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Inventory.Receipt o) = number(o) + ' (' + fmtDateTime(scheduledDateTime(o)) + ')';
+feedNumberDate (Inventory.Scrap o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Inventory.Shipment o) = number(o) + ' (' + fmtDateTime(scheduledDateTime(o)) + ')';
+feedNumberDate (Invoicing.Bill o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Invoicing.Invoice o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Invoicing.IncomingPayment o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Invoicing.OutgoingPayment o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Purchase.Order o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Purchase.Pricelist o) = number(o) + ' (' + fmtDateTime(startDateTime(o)) + ')';
+feedNumberDate (Sales.Order o) = number(o) + ' (' + fmtDateTime(dateTime(o)) + ')';
+feedNumberDate (Sales.Pricelist o) = number(o) + ' (' + fmtDateTime(startDateTime(o)) + ')';
+
 feedText 'Text' = ABSTRACT HTMLTEXT (CommentMention);
 feedTargetText 'Object' = ABSTRACT TEXT (CommentMention);
 
@@ -68,7 +91,7 @@ mentionsI18n () = JSON FROM
 FORM mentions 'Упоминания'
     OBJECTS c = CommentMention CUSTOM 'mentionFeed' OPTIONS JSON FROM i18n = mentionsI18n()
     PROPERTIES(c) avatar = feedAvatar, author = feedAuthorName,
-                   ago = feedAgo, date = feedMoment,
+                   ago = feedAgo, date = feedDate,
                    text = feedText, target = feedTargetText,
                    unread = feedUnread
     PROPERTIES(c) open = openMention, toggle = toggleReadMention
@@ -169,34 +192,34 @@ feedTargetText (BomMention r) += name(Manufacturing.bom(comment(r)));
 commentObj (WorkOrderMention r) += Manufacturing.workOrder(comment(r));
 feedTargetText (WorkOrderMention r) += name(Manufacturing.workOrder(comment(r)));
 commentObj (ManufacturingOrderMention r) += Manufacturing.manufacturingOrder(comment(r));
-feedTargetText (ManufacturingOrderMention r) += numberDate(Manufacturing.manufacturingOrder(comment(r)));
+feedTargetText (ManufacturingOrderMention r) += feedNumberDate(Manufacturing.manufacturingOrder(comment(r)));
 commentObj (PayslipMention r) += Payroll.payslip(comment(r));
 feedTargetText (PayslipMention r) += nameEmployee(Payroll.payslip(comment(r)));
 commentObj (AdjustmentMention r) += Inventory.adjustment(comment(r));
-feedTargetText (AdjustmentMention r) += numberDate(Inventory.adjustment(comment(r)));
+feedTargetText (AdjustmentMention r) += feedNumberDate(Inventory.adjustment(comment(r)));
 commentObj (ReceiptMention r) += Inventory.receipt(comment(r));
-feedTargetText (ReceiptMention r) += numberDate(Inventory.receipt(comment(r)));
+feedTargetText (ReceiptMention r) += feedNumberDate(Inventory.receipt(comment(r)));
 commentObj (ScrapMention r) += Inventory.scrap(comment(r));
-feedTargetText (ScrapMention r) += numberDate(Inventory.scrap(comment(r)));
+feedTargetText (ScrapMention r) += feedNumberDate(Inventory.scrap(comment(r)));
 commentObj (ShipmentMention r) += Inventory.shipment(comment(r));
-feedTargetText (ShipmentMention r) += numberDate(Inventory.shipment(comment(r)));
+feedTargetText (ShipmentMention r) += feedNumberDate(Inventory.shipment(comment(r)));
 commentObj (BillMention r) += Invoicing.bill(comment(r));
-feedTargetText (BillMention r) += numberDate(Invoicing.bill(comment(r)));
+feedTargetText (BillMention r) += feedNumberDate(Invoicing.bill(comment(r)));
 commentObj (InvoiceMention r) += Invoicing.invoice(comment(r));
-feedTargetText (InvoiceMention r) += numberDate(Invoicing.invoice(comment(r)));
+feedTargetText (InvoiceMention r) += feedNumberDate(Invoicing.invoice(comment(r)));
 commentObj (IncomingPaymentMention r) += Invoicing.incomingPayment(comment(r));
-feedTargetText (IncomingPaymentMention r) += numberDate(Invoicing.incomingPayment(comment(r)));
+feedTargetText (IncomingPaymentMention r) += feedNumberDate(Invoicing.incomingPayment(comment(r)));
 commentObj (OutgoingPaymentMention r) += Invoicing.outgoingPayment(comment(r));
-feedTargetText (OutgoingPaymentMention r) += numberDate(Invoicing.outgoingPayment(comment(r)));
+feedTargetText (OutgoingPaymentMention r) += feedNumberDate(Invoicing.outgoingPayment(comment(r)));
 commentObj (JournalEntryMention r) += Accounting.journalEntry(comment(r));
 feedTargetText (JournalEntryMention r) += description(Accounting.journalEntry(comment(r)));
 commentObj (AssetMention r) += Accounting.asset(comment(r));
 feedTargetText (AssetMention r) += nameItem(Accounting.asset(comment(r)));
 commentObj (PurchaseOrderMention r) += Purchase.order(comment(r));
-feedTargetText (PurchaseOrderMention r) += numberDate(Purchase.order(comment(r)));
+feedTargetText (PurchaseOrderMention r) += feedNumberDate(Purchase.order(comment(r)));
 commentObj (PurchasePricelistMention r) += Purchase.pricelist(comment(r));
-feedTargetText (PurchasePricelistMention r) += numberDate(Purchase.pricelist(comment(r)));
+feedTargetText (PurchasePricelistMention r) += feedNumberDate(Purchase.pricelist(comment(r)));
 commentObj (SalesOrderMention r) += Sales.order(comment(r));
-feedTargetText (SalesOrderMention r) += numberDate(Sales.order(comment(r)));
+feedTargetText (SalesOrderMention r) += feedNumberDate(Sales.order(comment(r)));
 commentObj (SalesPricelistMention r) += Sales.pricelist(comment(r));
-feedTargetText (SalesPricelistMention r) += numberDate(Sales.pricelist(comment(r)));
+feedTargetText (SalesPricelistMention r) += feedNumberDate(Sales.pricelist(comment(r)));

@@ -1,6 +1,6 @@
 // Mentions feed (#5280) — CUSTOM 'mentionFeed' on the mentions form.
 // Renders the Kaiten-style list of all comments the current user is @-mentioned in:
-// one row per mention — author, object the comment lives on, relative time, comment
+// one row per mention — author, object the comment lives on, date and time, comment
 // body and a read/unread envelope. Clicking a row (or the object chip) opens the
 // object and marks the mention read; the envelope toggles the read mark alone.
 // Helpers mirror comments.js on purpose: same avatars, same sanitizer, same look.
@@ -141,8 +141,8 @@ function mentionFeed() {
 
                 let time = document.createElement("span");
                 time.className = "mnt-time";
-                time.textContent = item.ago || "";
-                time.setAttribute("title", item.date || "");
+                time.textContent = item.date || "";
+                time.setAttribute("title", item.ago || "");
                 head.appendChild(time);
 
                 // the object the comment was left on — Kaiten's card link
