@@ -1,0 +1,148 @@
+MODULE TaskMaxNotification;
+
+REQUIRE Task, MaxMessenger, Assignee, Comments,
+        ManufacturingOrderNotification; // chat(Employee), nameChat — пока живут там
+
+NAMESPACE ProjectManagement;
+
+// ============================================================
+// Нотифаеры задачи: связка Task <-> Employee + флаг канала Max
+// ============================================================
+CLASS TaskNotifier 'Notifier';
+
+task = DATA Task (TaskNotifier) NONULL DELETE INDEXED;
+employee = DATA Employee (TaskNotifier) NONULL INDEXED;
+nameEmployee 'Employee' (TaskNotifier n) = name(employee(n));
+
+sendToMax 'Max' = DATA BOOLEAN (TaskNotifier);
+
+countNotifiers (Task t) = GROUP SUM 1 IF task(TaskNotifier n) = t;
+
+// Проверка существования нотифаера для пары (task, employee)
+notifierExists (Task t, Employee e) = GROUP SUM 1 IF task(TaskNotifier n) = t AND employee(n) = e;
+
+// ============================================================
+// Уведомления: объявления ДО WHEN-блоков, которые их используют
+// ============================================================
+sendNotificationTask 'Отправка уведомлений по задаче' ABSTRACT LIST (Task, STRING);
+
+// Человекочитаемое представление задачи для уведомлений: «Имя №id»
+taskTitle 'Task' (Task t) = name(t) + ' №' + id(t);
+
+cleanCommentText = FORMULA STRING 'btrim(regexp_replace(regexp_replace($1, \'</p>|<br[^>]*>\', chr(10), \'gi\'), \'<[^>]+>\', \'\', \'g\'))';
+
+textMessageComment(TaskComment c) = CONCAT '\n',
+    '💬 Новый комментарий',
+    '📋 Задача: ' + taskTitle(task(c)),
+    '👤 ' + fullName(user(c)),
+    '',
+    cleanCommentText(text(c));
+
+textMessageMention(TaskComment c) = CONCAT '\n',
+    '💬 Упоминание',
+    '📋 Задача: ' + taskTitle(task(c)),
+    '👤 ' + fullName(user(c)),
+    '',
+    cleanCommentText(text(c));
+
+// Сообщение о назначении задачи — ОБЪЯВЛЕНО ДО WHEN, который его использует
+textMessageAssigned(Task t) = CONCAT '\n',
+    '📌 Задача назначена',
+    '📋 Задача: ' + taskTitle(t),
+    '👤 Автор: ' + nameAuthor(t);
+
+// ---------- файлы ----------
+addedFile 'Added' = DATA LOCAL BOOLEAN (TaskFile);
+WHEN SETCHANGED(file(TaskFile f)) DO addedFile(f) <- TRUE;
+
+countAddedFiles (Task t) = GROUP SUM 1 IF addedFile(TaskFile f) AND task(f) = t;
+namesAddedFiles (Task t) = GROUP CONCAT (CONCAT '.', name(TaskFile f), extension(f)), '\n'
+    IF addedFile(f) AND task(f) = t ORDER f;
+lastAddedFile (Task t) = GROUP LAST TaskFile f ORDER f WHERE addedFile(f) AND task(f) = t;
+userAddedFiles (Task t) = fullName(user(lastAddedFile(t)));
+
+textMessageFiles(Task t) = CONCAT '\n',
+    '📎 Добавлено файлов: ' + countAddedFiles(t),
+    '📋 Задача: ' + taskTitle(t),
+    '👤 ' + userAddedFiles(t);
+// '',
+// namesAddedFiles(t); // перечень файлов отключён по аналогии с производственным заказом
+
+// ---------- отправка в Max ----------
+// sendNotificationTaskMessenger — тоже объявлен до WHEN, которые его вызывают
+sendNotificationTaskMessenger(Task t, Employee e, STRING s){
+    sendMessageMaxTry(Manufacturing.chat(e), s);
+}
+
+sendNotificationTask(Task t, STRING s)+{
+    FOR task(TaskNotifier n) = t AND sendToMax(n) AND Manufacturing.chat(employee(n)) DO {
+        sendNotificationTaskMessenger(t, employee(n), s);
+    }
+}
+
+// ============================================================
+// Автосоздание нотифаеров + уведомление о назначении
+// ============================================================
+// Один WHEN на изменение списка исполнителей:
+//  1) создаёт нотифаеры для тех пар (task, employee), которых ещё нет,
+//     сразу проставляя sendToMax = TRUE;
+//  2) шлёт в Max уведомление каждому СТАВШЕМУ назначенным сотруднику
+//     (у кого PREV = NULL/FALSE), т.е. и при первичном назначении,
+//     и при смене ответственного, и при повторном переназначении.
+WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t) DO {
+    FOR assignedTo(t, Employee e) DO {
+        IF NOT notifierExists(t, e) THEN
+            NEW n = TaskNotifier {
+                task(n) <- t;
+                employee(n) <- e;
+                sendToMax(n) <- TRUE;
+            }
+    }
+    FOR assignedTo(t, Employee e) DO
+        IF NOT PREV(assignedTo(t, e))
+            AND Manufacturing.chat(e)
+            AND NOT e = currentUser()
+        THEN
+            sendNotificationTaskMessenger(t, e, textMessageAssigned(t));
+}
+
+// ============================================================
+// Комментарии и файлы
+// ============================================================
+WHEN SETCHANGED(text(TaskComment c)) AND Task t = task(c) DO
+    sendNotificationTask(t, textMessageComment(c));
+
+WHEN countAddedFiles(Task t) DO {
+    sendNotificationTask(t, textMessageFiles(t));
+    addedFile(TaskFile f) <- NULL WHERE addedFile(f) AND task(f) = t;
+}
+
+// ============================================================
+// Упоминания @ в комментариях
+// ============================================================
+WHEN SETCHANGED(text(TaskComment c))
+    AND mentioned(c, Employee e)
+    AND NOT user(c) = e
+    AND Task t = task(c)
+    AND Manufacturing.chat(e)
+    DO {
+    sendNotificationTaskMessenger(t, e, textMessageMention(c));
+}
+
+// ============================================================
+// UI: блок нотифаеров на форме задачи
+// ============================================================
+EXTEND FORM task
+    OBJECTS n = TaskNotifier
+    PROPERTIES(n) nameEmployee, sendToMax, NEW, DELETE
+    FILTERS task(n) = t
+;
+
+DESIGN task {
+    details {
+        NEW notifications {
+            caption = badged('Оповещения', countNotifiers(t));
+            MOVE BOX(n) { caption = ''; }
+        }
+    }
+}
