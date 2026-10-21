@@ -1,0 +1,104 @@
+MODULE ProjectMaxNotification;
+
+REQUIRE Project,
+        TaskMaxNotification; // cleanCommentText, а через него Manufacturing.chat(Employee)
+
+NAMESPACE ProjectManagement;
+
+// ============================================================
+// Нотифаеры проекта: связка Project <-> Employee + флаг канала Max
+// ============================================================
+CLASS ProjectNotifier 'Notifier';
+
+project = DATA Project (ProjectNotifier) NONULL DELETE INDEXED;
+employee = DATA Employee (ProjectNotifier) NONULL INDEXED;
+nameEmployee 'Employee' (ProjectNotifier n) = name(employee(n));
+
+sendToMax 'Max' = DATA BOOLEAN (ProjectNotifier);
+
+countNotifiers (Project p) = GROUP SUM 1 IF project(ProjectNotifier n) = p;
+
+// Чат, в который уходит уведомление; автору изменения не шлём
+recipientChat (ProjectNotifier n) = Manufacturing.chat(employee(n)) IF sendToMax(n) AND NOT employee(n) = currentUser();
+
+// ============================================================
+// Тексты уведомлений
+// ============================================================
+// Человекочитаемое представление проекта: «Имя / номер»
+projectTitle 'Project' (Project p) = CONCAT ' / ', name(p), number(p);
+
+commentBody (ProjectComment c) = CONCAT '\n',
+    '📁 Проект: ' + projectTitle(project(c)),
+    '👤 ' + fullName(currentUser()),
+    '',
+    cleanCommentText(text(c));
+
+// ============================================================
+// Автосоздание нотифаера для менеджера проекта
+// ============================================================
+// При назначении/смене менеджера добавляем его в оповещения, если его там ещё нет.
+// Прежний менеджер остаётся в списке — его можно убрать вручную.
+WHEN SETCHANGED(manager(Project p))
+    AND NOT (GROUP SUM 1 IF project(ProjectNotifier n) = p AND employee(n) = manager(p)) DO
+    NEW n = ProjectNotifier {
+        project(n) <- p;
+        employee(n) <- manager(p);
+        sendToMax(n) <- TRUE;
+    }
+
+// ============================================================
+// Комментарии (новые и изменённые)
+// ============================================================
+// Упомянутым в комментарии здесь не шлём — они получат отдельное уведомление об упоминании
+WHEN SETCHANGED(text(ProjectComment c)) AND Project p = project(c) DO
+    FOR project(ProjectNotifier n) = p AND recipientChat(n) AND NOT mentioned(c, employee(n)) DO
+        sendMessageMaxTry(recipientChat(n), CONCAT '\n',
+            (IF PREV(text(c)) THEN '✏️ Комментарий изменён' ELSE '💬 Новый комментарий'),
+            commentBody(c));
+
+// ============================================================
+// Упоминания @ в комментариях
+// ============================================================
+WHEN SETCHANGED(text(ProjectComment c))
+    AND mentioned(c, Employee e)
+    AND NOT e = currentUser()
+    AND Manufacturing.chat(e)
+    DO
+    sendMessageMaxTry(Manufacturing.chat(e), CONCAT '\n',
+        (IF PREV(text(c)) THEN '✏️ Упоминание (комментарий изменён)' ELSE '💬 Упоминание'),
+        commentBody(c));
+
+// ============================================================
+// Файлы
+// ============================================================
+addedFile 'Added' = DATA LOCAL BOOLEAN (ProjectFile);
+WHEN SETCHANGED(file(ProjectFile f)) DO addedFile(f) <- TRUE;
+
+countAddedFiles (Project p) = GROUP SUM 1 IF addedFile(ProjectFile f) AND project(f) = p;
+
+WHEN countAddedFiles(Project p) DO {
+    FOR project(ProjectNotifier n) = p AND recipientChat(n) DO
+        sendMessageMaxTry(recipientChat(n), CONCAT '\n',
+            '📎 Добавлено файлов: ' + countAddedFiles(p),
+            '📁 Проект: ' + projectTitle(p),
+            '👤 ' + fullName(currentUser()));
+    addedFile(ProjectFile f) <- NULL WHERE addedFile(f) AND project(f) = p;
+}
+
+// ============================================================
+// UI: блок нотифаеров на форме проекта
+// ============================================================
+EXTEND FORM project
+    OBJECTS pn = ProjectNotifier
+    PROPERTIES(pn) nameEmployee, sendToMax, NEW, DELETE
+    FILTERS project(pn) = p
+;
+
+DESIGN project {
+    details {
+        NEW notifications {
+            caption = badged('Оповещения', countNotifiers(p));
+            MOVE BOX(pn) { caption = ''; }
+        }
+    }
+}

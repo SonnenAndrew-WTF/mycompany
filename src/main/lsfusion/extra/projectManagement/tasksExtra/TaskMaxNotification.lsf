@@ -31,17 +31,18 @@ taskTitle 'Task' (Task t) = name(t) + ' №' + id(t);
 
 cleanCommentText = FORMULA STRING 'btrim(regexp_replace(regexp_replace($1, \'</p>|<br[^>]*>\', chr(10), \'gi\'), \'<[^>]+>\', \'\', \'g\'))';
 
+// Заголовок различает новый и изменённый комментарий; 👤 — тот, кто сохранил изменение
 textMessageComment(TaskComment c) = CONCAT '\n',
-    '💬 Новый комментарий',
+    (IF PREV(text(c)) THEN '✏️ Комментарий изменён' ELSE '💬 Новый комментарий'),
     '📋 Задача: ' + taskTitle(task(c)),
-    '👤 ' + fullName(user(c)),
+    '👤 ' + fullName(currentUser()),
     '',
     cleanCommentText(text(c));
 
 textMessageMention(TaskComment c) = CONCAT '\n',
-    '💬 Упоминание',
+    (IF PREV(text(c)) THEN '✏️ Упоминание (комментарий изменён)' ELSE '💬 Упоминание'),
     '📋 Задача: ' + taskTitle(task(c)),
-    '👤 ' + fullName(user(c)),
+    '👤 ' + fullName(currentUser()),
     '',
     cleanCommentText(text(c));
 
@@ -75,7 +76,9 @@ sendNotificationTaskMessenger(Task t, Employee e, STRING s){
 }
 
 sendNotificationTask(Task t, STRING s)+{
-    FOR task(TaskNotifier n) = t AND sendToMax(n) AND Manufacturing.chat(employee(n)) DO {
+    // автору изменения не шлём
+    FOR task(TaskNotifier n) = t AND sendToMax(n) AND Manufacturing.chat(employee(n))
+        AND NOT employee(n) = currentUser() DO {
         sendNotificationTaskMessenger(t, employee(n), s);
     }
 }
@@ -109,8 +112,11 @@ WHEN SETCHANGED(assignedTo(Task t)) AND assignedTo(t) DO {
 // ============================================================
 // Комментарии и файлы
 // ============================================================
+// Автору изменения не шлём; упомянутым здесь тоже не шлём — они получат отдельное уведомление об упоминании
 WHEN SETCHANGED(text(TaskComment c)) AND Task t = task(c) DO
-    sendNotificationTask(t, textMessageComment(c));
+    FOR task(TaskNotifier n) = t AND sendToMax(n) AND Manufacturing.chat(employee(n))
+        AND NOT employee(n) = currentUser() AND NOT mentioned(c, employee(n)) DO
+        sendNotificationTaskMessenger(t, employee(n), textMessageComment(c));
 
 WHEN countAddedFiles(Task t) DO {
     sendNotificationTask(t, textMessageFiles(t));
@@ -122,7 +128,7 @@ WHEN countAddedFiles(Task t) DO {
 // ============================================================
 WHEN SETCHANGED(text(TaskComment c))
     AND mentioned(c, Employee e)
-    AND NOT user(c) = e
+    AND NOT e = currentUser()
     AND Task t = task(c)
     AND Manufacturing.chat(e)
     DO {

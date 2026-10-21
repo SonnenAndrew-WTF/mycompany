@@ -2,6 +2,7 @@ MODULE ProjectManagementExtra;
 
 REQUIRE TimesheetPersonalEmployee,
         TimesheetSupervisorExtra,
-        TaskMaxNotification;
+        TaskMaxNotification,
+        ProjectMaxNotification;
 
 
