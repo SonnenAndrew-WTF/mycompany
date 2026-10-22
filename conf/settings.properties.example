@@ -1,0 +1,14 @@
+# Пример локальных настроек сервера lsFusion.
+# Скопируйте в conf/settings.properties и укажите свои значения — этот файл не хранится в git.
+db.server=localhost
+db.name=mycompany
+db.user=postgres
+db.password=
+
+rmi.port=7652
+
+#user.setLanguage=en
+#user.setCountry=US
+
+# Верхний модуль: MyCompanyExtra — доработки extra, AlfaExtra — доработки alfaExtra (включает extra)
+logics.topModule = MyCompanyExtra

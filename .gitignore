@@ -7,3 +7,6 @@
 /target/
 /.lsfusion-dev/
 /out/artifacts/MK_Extra/MK-Extra.jar
+
+/conf/settings.properties
+CLAUDE.local.md
