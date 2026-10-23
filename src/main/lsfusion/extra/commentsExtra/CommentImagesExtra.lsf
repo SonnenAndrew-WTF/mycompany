@@ -1,0 +1,15 @@
+MODULE CommentImagesExtra;
+
+REQUIRE Comments;
+
+NAMESPACE Utils;
+
+// Картинки в комментариях как ОВЕРЛЕЙ: Comments.lsf и comments.js — код upstream, их не меняем.
+// commentImages.js расширяет window.Quill (кнопка «картинка», сжатие вставленных скринов) и
+// оборачивает виды comments / mentionFeed, чтобы показывать <img> с data:image, который базовый
+// фильтр HTML вырезает. Картинка хранится внутри RICHTEXT комментария, поэтому модель не меняется.
+// Порядок 5 — после comments.js (2), mentions.js (3) и commentMentions.js (4), которые он оборачивает.
+onWebClientInit() + {
+    onWebClientInit('commentImages.css') <- 5;
+    onWebClientInit('commentImages.js') <- 5;
+}
