@@ -1,0 +1,35 @@
+/* Картинки в комментариях (commentImages.js). */
+
+/* в редакторе — не шире поля и не выше полэкрана диалога */
+.comment-editor .ql-editor img {
+    max-width: 100%;
+    max-height: 300px;
+}
+
+/* в списке комментариев и ленте упоминаний — миниатюра, по клику полный размер */
+.cmt-message img.cmt-img {
+    display: block;
+    max-width: 100%;
+    max-height: 200px;
+    margin: 4px 0;
+    border: 1px solid var(--grid-separator-border-color, #ddd);
+    border-radius: 4px;
+    cursor: zoom-in;
+}
+
+.cmt-img-viewer {
+    position: fixed;
+    inset: 0;
+    z-index: 100000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.75);
+    cursor: zoom-out;
+}
+
+.cmt-img-viewer img {
+    max-width: 95vw;
+    max-height: 95vh;
+    box-shadow: 0 4px 24px rgba(0, 0, 0, 0.5);
+}
