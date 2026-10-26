@@ -1,0 +1,150 @@
+MODULE WorkAllocation;
+
+REQUIRE WorkBoard, Time;
+
+NAMESPACE Manufacturing;
+
+// Распределение: сотрудник работает на заказе с даты по дату (пустая «по» — до перевода),
+// часов в день (пусто — полный день). Отделённая через Ctrl плашка — дочерняя: parent
+// указывает на основное распределение сотрудника.
+CLASS WorkAllocation 'Распределение';
+TABLE workAllocation (WorkAllocation);
+
+employee = DATA Employee (WorkAllocation) NONULL TABLE workAllocation INDEXED;
+nameEmployee 'Сотрудник' (WorkAllocation a) = name(employee(a)) IN id;
+namePosition 'Должность' (WorkAllocation a) = namePosition(employee(a));
+
+order = DATA ManufacturingOrder (WorkAllocation) NONULL DELETE TABLE workAllocation INDEXED;
+numberOrder 'Заказ' (WorkAllocation a) = number(order(a)) IN id;
+
+fromDate 'Дата с' = DATA DATE (WorkAllocation) NONULL TABLE workAllocation IN base;
+toDate 'Дата по' = DATA DATE (WorkAllocation) TABLE workAllocation IN base;
+hours 'Часов в день' = DATA NUMERIC[5,2] (WorkAllocation) TABLE workAllocation IN base;
+parent = DATA WorkAllocation (WorkAllocation) TABLE workAllocation;
+
+CONSTRAINT toDate(WorkAllocation a) < fromDate(a)
+    MESSAGE 'Дата по в распределении не может быть раньше даты с';
+CONSTRAINT parent(WorkAllocation a) = a
+    MESSAGE 'Распределение не может быть отделено от самого себя';
+CONSTRAINT hours(WorkAllocation a) <= 0
+    MESSAGE 'Часов в день в распределении должно быть больше нуля';
+
+dayHours 'Часов в день' (WorkAllocation a) = OVERRIDE hours(a), workDayHours();
+
+overlaps (WorkAllocation a, DATE from, DATE to) = fromDate(a) <= to AND NOT toDate(a) < from;
+
+load (Employee e, DATE from, DATE to) = GROUP SUM dayHours(WorkAllocation a) IF employee(a) = e AND overlaps(a, from, to);
+freeHours (Employee e, DATE from, DATE to) = workDayHours() (-) load(e, from, to);
+
+// основное (первое) распределение сотрудника в периоде — к нему цепляются отделённые плашки
+root (Employee e, DATE from, DATE to) = GROUP LAST WorkAllocation a ORDER DESC fromDate(a), a
+    WHERE employee(a) = e AND overlaps(a, from, to) AND NOT parent(a);
+
+// Распределение, которое начинается до даты d, разрезается: старое закрывается днём раньше,
+// с d действует копия. Результат — часть, действующая с d.
+cutResult = DATA LOCAL WorkAllocation ();
+
+cut (WorkAllocation a, DATE d) {
+    IF fromDate(a) < d THEN {
+        NEW n = WorkAllocation {
+            employee(n) <- employee(a);
+            order(n) <- order(a);
+            hours(n) <- hours(a);
+            parent(n) <- parent(a);
+            fromDate(n) <- d;
+            toDate(n) <- toDate(a);
+            parent(WorkAllocation c) <- n WHERE parent(c) = a AND NOT toDate(c) < d;
+            toDate(a) <- sum(d, -1);
+            cutResult() <- n;
+        }
+    } ELSE
+        cutResult() <- a;
+}
+
+// Действия доски. Вызываются из workboard.js (CUSTOMS формы), поэтому проверяют аргументы сами.
+
+// сотрудник из «Свободных» ставится на заказ на свободные часы
+allocate (Employee e, ManufacturingOrder o, DATE from, DATE to) {
+    IF NOT (e IS Employee AND o IS ManufacturingOrder AND from <= to) THEN RETURN;
+    NEWSESSION {
+        LOCAL free = NUMERIC[5,2] ();
+        LOCAL main = WorkAllocation ();
+        free() <- freeHours(e, from, to);
+        IF NOT free() > 0 THEN RETURN;
+        // основное распределение ищется до создания новой плашки, иначе она найдёт саму себя
+        main() <- root(e, from, to);
+        NEW n = WorkAllocation {
+            employee(n) <- e;
+            order(n) <- o;
+            fromDate(n) <- from;
+            // до планового завершения заказа; не указано (или уже прошло) — «до перевода»
+            toDate(n) <- planeDateTime(o) IF planeDateTime(o) >= from;
+            hours(n) <- free() IF free() < workDayHours();
+            parent(n) <- main();
+        }
+        APPLY;
+    }
+}
+
+// перевод плашки на другой заказ с даты from
+move (WorkAllocation a, ManufacturingOrder o, DATE from) {
+    IF NOT (a IS WorkAllocation AND o IS ManufacturingOrder AND from) OR order(a) = o THEN RETURN;
+    NEWSESSION {
+        cut(a, from);
+        order(cutResult()) <- o;
+        APPLY;
+    }
+}
+
+// снятие с заказа с даты from: запланированное с этой даты удаляется, начатое раньше — закрывается
+release (WorkAllocation a, DATE from) {
+    IF NOT (a IS WorkAllocation AND from) THEN RETURN;
+    NEWSESSION {
+        IF fromDate(a) < from THEN
+            toDate(a) <- sum(from, -1);
+        ELSE
+            DELETE a;
+        APPLY;
+    }
+}
+
+// Ctrl + перетаскивание: от плашки отделяется h часов на заказ o, остаток остаётся на месте
+split (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
+    IF NOT (a IS WorkAllocation AND o IS ManufacturingOrder AND h > 0 AND from) OR order(a) = o THEN RETURN;
+    IF h >= dayHours(a) THEN {
+        move(a, o, from);
+        RETURN;
+    }
+    NEWSESSION {
+        cut(a, from);
+        NEW n = WorkAllocation {
+            employee(n) <- employee(cutResult());
+            order(n) <- o;
+            fromDate(n) <- from;
+            toDate(n) <- toDate(cutResult());
+            hours(n) <- h;
+            parent(n) <- OVERRIDE parent(cutResult()), cutResult();
+        }
+        hours(cutResult()) <- NUMERIC[5,2](dayHours(cutResult()) - h);
+        APPLY;
+    }
+}
+
+FORM workAllocation 'Распределение'
+    OBJECTS a = WorkAllocation PANEL
+    PROPERTIES(a) nameEmployee, numberOrder, fromDate, toDate, hours
+
+    EDIT WorkAllocation OBJECT a
+;
+
+DESIGN workAllocation {
+    OBJECTS {
+        NEW fields FIRST {
+            MOVE PROPERTY(nameEmployee(a));
+            MOVE PROPERTY(numberOrder(a));
+            MOVE PROPERTY(fromDate(a));
+            MOVE PROPERTY(toDate(a));
+            MOVE PROPERTY(hours(a));
+        }
+    }
+}

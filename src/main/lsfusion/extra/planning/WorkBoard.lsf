@@ -1,0 +1,131 @@
+MODULE WorkBoard;
+
+REQUIRE ManufacturingOrder, ManufacturingOrderDone, ManufacturingOrderCanceled, ManufacturingOrderExtra,
+        ProjectManufacturingOrder, Employee, Department, Position;
+
+NAMESPACE Manufacturing;
+
+// Доска распределения работ: отдельное «поле» с производственными заказами своих типов
+// и пулом сотрудников своих подразделений (например, «Производство» и «Командировки»).
+CLASS WorkBoard 'Доска распределения';
+TABLE workBoard (WorkBoard);
+
+name 'Наименование' = DATA ISTRING[50] (WorkBoard) TABLE workBoard IN id CHARWIDTH 20;
+index 'Порядок' = DATA INTEGER (WorkBoard) TABLE workBoard IN base;
+
+// типы заказов, которые попадают на доску
+TABLE workBoardType (WorkBoard, ManufacturingOrderType);
+in 'Вкл.' = DATA BOOLEAN (WorkBoard, ManufacturingOrderType) TABLE workBoardType;
+types 'Типы заказов' (WorkBoard b) = GROUP CONCAT name(ManufacturingOrderType t) IF in(b, t), ', ' ORDER name(t), t CHARWIDTH 30;
+
+defaultBoard (ManufacturingOrderType t) = GROUP LAST WorkBoard b ORDER DESC index(b), b WHERE in(b, t);
+
+// подразделения, из которых берутся люди; ни одного не указано — все сотрудники
+TABLE workBoardDepartment (WorkBoard, Department);
+in 'Вкл.' = DATA BOOLEAN (WorkBoard, Department) TABLE workBoardDepartment;
+departments 'Подразделения' (WorkBoard b) = GROUP CONCAT name(Department d) IF in(b, d), ', ' ORDER name(d), d CHARWIDTH 30;
+countDepartments (WorkBoard b) = GROUP SUM 1 IF in(b, Department d);
+
+// должности, которые не распределяются на этой доске (например, охранник в подразделении «Завод»)
+TABLE workBoardPosition (WorkBoard, Position);
+excluded 'Искл.' = DATA BOOLEAN (WorkBoard, Position) TABLE workBoardPosition;
+excludedPositions 'Исключить должности' (WorkBoard b) = GROUP CONCAT name(Position p) IF excluded(b, p), ', ' ORDER name(p), p CHARWIDTH 30;
+
+// должность есть у действующих сотрудников (справочник общий с контактами контрагентов)
+countEmployees (Position p) = GROUP SUM 1 IF position(Employee e) = p AND e IS Employee AND active(e);
+
+inPool (WorkBoard b, Employee e) = active(e) AND b IS WorkBoard AND (NOT countDepartments(b) OR in(b, department(e)))
+    AND NOT excluded(b, position(e));
+
+// доска заказа: по типу, можно переопределить вручную
+dataBoard = DATA WorkBoard (ManufacturingOrder);
+board (ManufacturingOrder o) = OVERRIDE dataBoard(o), defaultBoard(type(o));
+nameBoard 'Доска распределения' (ManufacturingOrder o) = name(board(o));
+
+namePartner 'Контрагент' (ManufacturingOrder o) = name(partner(project(o)));
+
+// норма рабочего дня: от неё считаются свободные часы
+dataWorkDayHours 'Норма рабочего дня, ч' = DATA NUMERIC[5,2] ();
+workDayHours () = OVERRIDE dataWorkDayHours(), 10.0;
+
+// состав доски выбирается в таблицах с галочками (как в подборе): виден весь справочник,
+// работает поиск по таблице, «Отмеченные» оставляют только выбранное
+FORM workBoard 'Доска распределения'
+    OBJECTS b = WorkBoard PANEL
+    PROPERTIES(b) name, index
+
+    OBJECTS t = ManufacturingOrderType
+    PROPERTIES(b, t) in
+    PROPERTIES(t) READONLY name
+    ORDERS name(t)
+    FILTERGROUP selectedTypes
+        FILTER 'Отмеченные' in(b, t)
+
+    OBJECTS d = Department
+    PROPERTIES(b, d) in
+    PROPERTIES(d) READONLY name
+    ORDERS name(d)
+    FILTERGROUP selectedDepartments
+        FILTER 'Отмеченные' in(b, d)
+
+    OBJECTS p = Position
+    PROPERTIES(b, p) excluded
+    PROPERTIES(p) READONLY name
+    ORDERS name(p)
+    // только должности сотрудников; уже отмеченные видны всегда, чтобы отметку можно было снять
+    FILTERS countEmployees(p) OR excluded(b, p)
+    FILTERGROUP selectedPositions
+        FILTER 'Отмеченные' excluded(b, p)
+
+    EDIT WorkBoard OBJECT b
+;
+
+DESIGN workBoard {
+    OBJECTS {
+        NEW lists {
+            horizontal = TRUE;
+            fill = 1;
+            MOVE BOX(t) { caption = 'Типы заказов'; }
+            MOVE BOX(d) { caption = 'Подразделения (пусто — все сотрудники)'; }
+            MOVE BOX(p) { caption = 'Исключить должности'; }
+        }
+    }
+}
+
+FORM workBoards 'Настройка досок распределения'
+    OBJECTS b = WorkBoard
+    PROPERTIES(b) READONLY name, index, types, departments, excludedPositions
+    PROPERTIES(b) NEWSESSION NEW, EDIT, DELETE
+
+    ORDERS index(b), name(b)
+
+    LIST WorkBoard OBJECT b
+;
+
+EXTEND FORM options
+    PROPERTIES() dataWorkDayHours
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(dataWorkDayHours());
+    }
+}
+
+EXTEND FORM manufacturingOrder
+    PROPERTIES(o) READONLYIF readonly(o) nameBoard
+;
+
+DESIGN manufacturingOrder {
+    headerLeft {
+        MOVE PROPERTY(nameBoard(o)) AFTER PROPERTY(nameType(o));
+    }
+}
+
+NAVIGATOR {
+    manufacturing {
+        settings {
+            NEW workBoards;
+        }
+    }
+}
