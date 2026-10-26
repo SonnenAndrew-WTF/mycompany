@@ -34,6 +34,22 @@ function workBoardHours(n) {
     return String(Math.round(Number(n) * 100) / 100).replace(".", ",");
 }
 
+// COLOR приходит из JSON числом ARGB (часто отрицательным) — в CSS нужен #RRGGBB
+function workBoardColor(c) {
+    if (c == null) return null;
+    return "#" + ((Number(c) >>> 0) & 0xFFFFFF).toString(16).padStart(6, "0");
+}
+
+// бейдж статуса заказа цветом статуса
+function workBoardStatus(order, cls) {
+    const s = document.createElement("span");
+    s.className = "wb-status" + (cls ? " " + cls : "");
+    s.textContent = order.status || "";
+    const color = workBoardColor(order.statusColor);
+    if (color) s.style.background = color;
+    return s;
+}
+
 // тот же цвет для одной и той же строки (должности) во всех представлениях
 function workBoardHue(str) {
     let h = 0;
@@ -256,6 +272,16 @@ function workBoard() {
             else v.classList.add("wb-col-wide");
             fields.appendChild(v);
         };
+        if (order.status) {
+            const l = document.createElement("span");
+            l.className = "wb-col-label";
+            l.textContent = workBoardText(options, "statusLabel", "Статус");
+            fields.appendChild(l);
+            const v = document.createElement("span");
+            v.className = "wb-col-value";
+            v.appendChild(workBoardStatus(order));
+            fields.appendChild(v);
+        }
         field(workBoardText(options, "partnerLabel", "Контрагент"), order.partner);
         field(workBoardText(options, "responsibleLabel", "Ответственный"), order.responsible);
         field(workBoardText(options, "startLabel", "Начало"), workBoardDateFull(order.start));

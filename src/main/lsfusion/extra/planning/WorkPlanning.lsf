@@ -15,6 +15,14 @@ filterPosition = DATA LOCAL Position ();
 nameFilterPosition 'Должность' () = name(filterPosition());
 filterResponsible = DATA LOCAL Employee ();
 nameFilterResponsible 'Ответственный' () = name(filterResponsible());
+filterType = DATA LOCAL ManufacturingOrderType ();
+nameFilterType 'Тип заказа' () = name(filterType());
+// выбор типа — только из типов текущей доски
+changeFilterType (WorkBoard b) {
+    INPUT t = filterType() CHANGE LIST name(t) WHERE in(b, t);
+}
+// поиск по номеру заказа (в МК номер — описательный текст), без учёта регистра
+orderSearch 'Номер заказа' = DATA LOCAL ISTRING[50] ();
 
 // диапазон планирования доски: всегда выбран ровно один
 CLASS PlanningRange 'Диапазон планирования' {
@@ -81,20 +89,26 @@ todayPeriod 'Сегодня' () {
 
 countAllocations (ManufacturingOrder o, DATE from, DATE to) = GROUP SUM 1 IF order(WorkAllocation a) = o AND overlaps(a, from, to);
 
-// колонки доски: активные заказы, начатые к концу периода; выполненные — по галочке, за последние 60 дней;
-// заказ, на котором в периоде стоят люди, виден всегда, чтобы они не «потерялись»
-shown (ManufacturingOrder o, WorkBoard b) = board(o) = b AND NOT canceled(o) AND
-    (countAllocations(o, periodFrom(), periodTo()) OR
-        ((IF done(o) THEN showDone() AND NOT DATE(executionDateTime(o)) < sum(periodFrom(), -60)
-                     ELSE scheduledDate(o) <= periodTo())
+// заказы доски за период: активные, начатые к концу периода; выполненные — по галочке, за последние 60 дней;
+// заказ, на котором в периоде стоят люди, виден всегда, чтобы они не «потерялись», — кроме фильтра по типу
+// и поиска по номеру; при поиске ограничения по датам не действуют: находятся все заказы доски с таким номером
+shown (ManufacturingOrder o, WorkBoard b, DATE from, DATE to) = board(o) = b AND NOT canceled(o) AND
+    (NOT filterType() OR type(o) = filterType()) AND
+    (NOT orderSearch() OR ISTRING[50](number(o)) LIKE r'%' + orderSearch() + r'%') AND
+    (countAllocations(o, from, to) OR
+        ((IF done(o) THEN showDone() AND (orderSearch() OR NOT DATE(executionDateTime(o)) < sum(from, -60))
+                     ELSE (orderSearch() OR scheduledDate(o) <= to))
          AND (NOT filterResponsible() OR responsible(o) = filterResponsible())));
+// колонки доски
+shown (ManufacturingOrder o, WorkBoard b) = shown(o, b, periodFrom(), periodTo());
 
 daysLeft (ManufacturingOrder o) = daysBetweenDates(planeDateTime(o), currentDate());
 
 boardOrders (WorkBoard b) = JSON FROM
     id = ManufacturingOrder o, number = number(o), item = STRING[100](nameItem(o)), note = STRING[100](note(o)),
     partner = STRING[100](namePartner(o)), responsible = STRING[100](nameResponsible(o)),
-    start = scheduledDate(o), end = planeDateTime(o), daysLeft = daysLeft(o), done = done(o)
+    start = scheduledDate(o), end = planeDateTime(o), daysLeft = daysLeft(o), done = done(o),
+    status = STRING[50](nameStatus(o)), statusColor = colorStatus(o)
     WHERE shown(o, b)
     ORDER scheduledDateTime(o), o
     TOP 100;
@@ -109,6 +123,7 @@ workBoardI18n () = JSON FROM
     daysShort = 'дн.',
     partnerLabel = 'Контрагент',
     responsibleLabel = 'Ответственный',
+    statusLabel = 'Статус',
     startLabel = 'Начало',
     endLabel = 'Окончание',
     leftLabel = 'Осталось',
@@ -164,11 +179,12 @@ boardSaveAllocation (WorkAllocation a, STRING from, STRING to, NUMERIC[5,2] h) {
 FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
     PROPERTIES() todayPeriod, prevPeriod, boardDate, nextPeriod, captionPlanningRange,
                  customFrom SHOWIF isCustom(), customTo SHOWIF isCustom(),
-                 nameFilterDepartment, nameFilterPosition, nameFilterResponsible, showDone
+                 nameFilterDepartment, nameFilterPosition, nameFilterResponsible, orderSearch, showDone
 
     OBJECTS b = WorkBoard CUSTOM 'workBoardTabs' PAGESIZE 0
     PROPERTIES(b) READONLY name, index
     ORDERS index(b), name(b)
+    PROPERTIES() nameFilterType ON CHANGE changeFilterType(b)
 
     OBJECTS e = Employee CUSTOM 'workBoardFree'
                 OPTIONS JSON FROM from = periodFrom(), to = periodTo(), actionDate = actionDate(), dayHours = workDayHours(), i18n = workBoardI18n()
@@ -199,7 +215,9 @@ FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
     EVENTS ON INIT {
         boardDate() <- currentDate();
         planningRange() <- PlanningRange.day;
-    }
+    },
+    // у другой доски свои типы заказов
+    ON CHANGE b { filterType() <- NULL; }
 ;
 
 DESIGN workPlanning {
@@ -259,6 +277,9 @@ DESIGN workPlanning {
                     horizontal = TRUE;
                     alignment = STRETCH;
                     MOVE PROPERTY(nameFilterResponsible());
+                    // выпадающий список: кнопками семь типов заняли бы всю ширину
+                    MOVE PROPERTY(nameFilterType()) { select = 'dropdown'; }
+                    MOVE PROPERTY(orderSearch());
                     MOVE PROPERTY(showDone());
                 }
                 MOVE GRID(a) {
@@ -274,7 +295,7 @@ DESIGN workPlanning {
     }
 }
 
-// отдельная папка планирования: сюда же на этапе 2 ляжет диаграмма Ганта
+// отдельная папка планирования (диаграмма Ганта — вкладка этой же формы, модуль WorkGantt)
 NAVIGATOR {
     manufacturing {
         NEW FOLDER planning 'Планирование' AFTER operations {
