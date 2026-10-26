@@ -1,0 +1,289 @@
+MODULE WorkPlanning;
+
+REQUIRE WorkAllocation, Authentication;
+
+NAMESPACE Manufacturing;
+
+// Форма «Доски распределения»: доска с колонками заказов и плашками людей (workboard.js).
+
+boardDate 'Дата' = DATA LOCAL DATE ();
+showDone 'Показать выполненные' = DATA LOCAL BOOLEAN ();
+
+filterDepartment = DATA LOCAL Department ();
+nameFilterDepartment 'Подразделение' () = name(filterDepartment());
+filterPosition = DATA LOCAL Position ();
+nameFilterPosition 'Должность' () = name(filterPosition());
+filterResponsible = DATA LOCAL Employee ();
+nameFilterResponsible 'Ответственный' () = name(filterResponsible());
+
+// диапазон планирования доски: всегда выбран ровно один
+CLASS PlanningRange 'Диапазон планирования' {
+    day 'День',
+    week 'Неделя',
+    month 'Месяц',
+    custom 'Свой диапазон'
+}
+
+planningRange = DATA LOCAL PlanningRange ();
+captionPlanningRange 'Диапазон' () = caption(planningRange());
+isCustom () = planningRange() = PlanningRange.custom;
+
+customFrom 'С' = DATA LOCAL DATE ();
+customTo 'По' = DATA LOCAL DATE ();
+// при выборе своего диапазона он начинается с выбранной даты на неделю вперёд
+customFrom() <- boardDate() WHEN SET(isCustom());
+customTo() <- sum(boardDate(), 6) WHEN SET(isCustom());
+
+// период доски: день, неделя (с понедельника) или месяц, в который попадает выбранная дата, либо свой диапазон
+periodFrom () = CASE
+    WHEN planningRange() = PlanningRange.week THEN sum(boardDate(), -numberM(extractDOW(boardDate())))
+    WHEN planningRange() = PlanningRange.month THEN firstDayOfMonth(boardDate())
+    WHEN isCustom() THEN (OVERRIDE customFrom(), boardDate())
+    ELSE boardDate();
+periodTo () = CASE
+    WHEN planningRange() = PlanningRange.week THEN sum(periodFrom(), 6)
+    WHEN planningRange() = PlanningRange.month THEN lastDayOfMonth(boardDate())
+    WHEN isCustom() THEN (MAX periodFrom(), (OVERRIDE customTo(), periodFrom()))
+    ELSE boardDate();
+periodCaption () = 'Диапазон планирования: ' + (IF periodFrom() = periodTo()
+    THEN extractDOWName(periodFrom()) + ', ' + toChar(periodFrom(), r'DD.MM.YYYY')
+    ELSE toChar(periodFrom(), r'DD.MM') + ' – ' + toChar(periodTo(), r'DD.MM.YYYY'));
+
+// дата, с которой доска ставит, переводит и снимает людей: сегодня, если оно внутри периода,
+// иначе первый день периода — чтобы перевод в режиме «Месяц» не переписывал прошедшие дни
+actionDate () = IF currentDate() >= periodFrom() AND currentDate() <= periodTo() THEN currentDate() ELSE periodFrom();
+
+shiftPeriod (INTEGER n) {
+    IF planningRange() = PlanningRange.month THEN
+        boardDate() <- sumMonth(boardDate(), n);
+    ELSE IF planningRange() = PlanningRange.week THEN
+        boardDate() <- sum(boardDate(), 7 * n);
+    ELSE IF isCustom() THEN {
+        // свой диапазон сдвигается на свою длину
+        LOCAL days = INTEGER ();
+        days() <- daysBetweenDates(periodTo(), periodFrom()) + 1;
+        customTo() <- sum(periodTo(), days() * n);
+        customFrom() <- sum(customTo(), 1 - days());
+    } ELSE
+        boardDate() <- sum(boardDate(), n);
+}
+prevPeriod '◀' () { shiftPeriod(-1); }
+nextPeriod '▶' () { shiftPeriod(1); }
+todayPeriod 'Сегодня' () {
+    IF isCustom() THEN {
+        LOCAL days = INTEGER ();
+        days() <- daysBetweenDates(periodTo(), periodFrom());
+        customFrom() <- currentDate();
+        customTo() <- sum(currentDate(), days());
+    }
+    boardDate() <- currentDate();
+}
+
+countAllocations (ManufacturingOrder o, DATE from, DATE to) = GROUP SUM 1 IF order(WorkAllocation a) = o AND overlaps(a, from, to);
+
+// колонки доски: активные заказы, начатые к концу периода; выполненные — по галочке, за последние 60 дней;
+// заказ, на котором в периоде стоят люди, виден всегда, чтобы они не «потерялись»
+shown (ManufacturingOrder o, WorkBoard b) = board(o) = b AND NOT canceled(o) AND
+    (countAllocations(o, periodFrom(), periodTo()) OR
+        ((IF done(o) THEN showDone() AND NOT DATE(executionDateTime(o)) < sum(periodFrom(), -60)
+                     ELSE scheduledDate(o) <= periodTo())
+         AND (NOT filterResponsible() OR responsible(o) = filterResponsible())));
+
+daysLeft (ManufacturingOrder o) = daysBetweenDates(planeDateTime(o), currentDate());
+
+boardOrders (WorkBoard b) = JSON FROM
+    id = ManufacturingOrder o, number = number(o), item = STRING[100](nameItem(o)), note = STRING[100](note(o)),
+    partner = STRING[100](namePartner(o)), responsible = STRING[100](nameResponsible(o)),
+    start = scheduledDate(o), end = planeDateTime(o), daysLeft = daysLeft(o), done = done(o)
+    WHERE shown(o, b)
+    ORDER scheduledDateTime(o), o
+    TOP 100;
+
+workBoardI18n () = JSON FROM
+    free = 'Свободные',
+    freeHint = 'Перетащите сюда, чтобы снять с заказа',
+    emptyBoard = 'На доске нет заказов за этот период',
+    hoursShort = 'ч',
+    freeShort = 'своб.',
+    overdue = 'просрочен на',
+    daysShort = 'дн.',
+    partnerLabel = 'Контрагент',
+    responsibleLabel = 'Ответственный',
+    startLabel = 'Начало',
+    endLabel = 'Окончание',
+    leftLabel = 'Осталось',
+    splitTitle = 'Сколько часов в день отделить на заказ',
+    splitOk = 'Отделить',
+    cancel = 'Отмена',
+    hours = 'Часов в день',
+    save = 'Сохранить',
+    fromDate = 'Дата с',
+    toDate = 'Дата по',
+    toDateHint = 'Пусто — до перевода на другой заказ',
+    release = 'Снять с заказа',
+    child = 'Отделённая плашка',
+    dragHint = 'Перетаскивание — перевод на другой заказ, с Ctrl — отделить часть дня';
+
+childInPeriod (WorkAllocation a) = parent(a) AND overlaps(parent(a), periodFrom(), periodTo());
+// у сотрудника в периоде несколько плашек — они подсвечиваются как одна «семья»
+countAllocations (Employee e, DATE from, DATE to) = GROUP SUM 1 IF employee(WorkAllocation a) = e AND overlaps(a, from, to);
+splitInPeriod (WorkAllocation a) = countAllocations(employee(a), periodFrom(), periodTo()) > 1;
+
+// порядок плашек в колонке: должность, фамилия, затем «семья» (основная и её отделённые), основная первой
+familyOrder (WorkAllocation a) = LONG((OVERRIDE (parent(a) IF childInPeriod(a)), a));
+childOrder (WorkAllocation a) = IF childInPeriod(a) THEN 1 ELSE 0;
+boardFreeHours (Employee e) = freeHours(e, periodFrom(), periodTo());
+
+
+// обёртки для workboard.js: даты приходят строкой ГГГГ-ММ-ДД
+boardAllocate (Employee e, ManufacturingOrder o, STRING from, STRING to) {
+    allocate(e, o, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+}
+boardMove (WorkAllocation a, ManufacturingOrder o, STRING from) {
+    move(a, o, toDateFormat(from, r'YYYY-MM-DD'));
+}
+boardRelease (WorkAllocation a, STRING from) {
+    release(a, toDateFormat(from, r'YYYY-MM-DD'));
+}
+boardSplit (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, STRING from) {
+    split(a, o, h, toDateFormat(from, r'YYYY-MM-DD'));
+}
+// карточка плашки на доске: исправление периода и часов самого распределения (без разрезания истории)
+boardSaveAllocation (WorkAllocation a, STRING from, STRING to, NUMERIC[5,2] h) {
+    IF NOT (a IS WorkAllocation AND from AND h > 0) THEN RETURN;
+    NEWSESSION {
+        fromDate(a) <- toDateFormat(from, r'YYYY-MM-DD');
+        // пустая «Дата по» приходит пустой строкой — это «до перевода»; '' не NULL,
+        // а toDateFormat('') дал бы 0001-01-01, поэтому пустую строку проверяем явно
+        toDate(a) <- toDateFormat(to, r'YYYY-MM-DD') IF to AND NOT to = r'';
+        hours(a) <- h IF h < workDayHours();
+        APPLY;
+    }
+}
+
+FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
+    PROPERTIES() todayPeriod, prevPeriod, boardDate, nextPeriod, captionPlanningRange,
+                 customFrom SHOWIF isCustom(), customTo SHOWIF isCustom(),
+                 nameFilterDepartment, nameFilterPosition, nameFilterResponsible, showDone
+
+    OBJECTS b = WorkBoard CUSTOM 'workBoardTabs' PAGESIZE 0
+    PROPERTIES(b) READONLY name, index
+    ORDERS index(b), name(b)
+
+    OBJECTS e = Employee CUSTOM 'workBoardFree'
+                OPTIONS JSON FROM from = periodFrom(), to = periodTo(), actionDate = actionDate(), dayHours = workDayHours(), i18n = workBoardI18n()
+                PAGESIZE 0
+    PROPERTIES(e) READONLY name, namePosition, free = boardFreeHours
+    PROPERTIES READONLY eid = (LONG(e))
+    ORDERS namePosition(e), name(e)
+    FILTERS inPool(b, e), boardFreeHours(e) > 0,
+            NOT filterDepartment() OR department(e) = filterDepartment(),
+            NOT filterPosition() OR position(e) = filterPosition()
+
+    OBJECTS a = WorkAllocation CUSTOM 'workBoard'
+                OPTIONS JSON FROM orders = boardOrders(b), from = periodFrom(), to = periodTo(), actionDate = actionDate(),
+                                  dayHours = workDayHours(), i18n = workBoardI18n()
+                PAGESIZE 0
+    PROPERTIES(a) READONLY nameEmployee, namePosition, employee, order, fromDate, toDate, hours, dayHours,
+                           child = childInPeriod, split = splitInPeriod, familyOrder, childOrder
+    PROPERTIES READONLY aid = (LONG(a))
+    ORDERS namePosition(a), nameEmployee(a), familyOrder(a), childOrder(a), aid
+    FILTERS board(order(a)) = b, overlaps(a, periodFrom(), periodTo()), shown(order(a), b)
+
+    CUSTOMS boardAllocate[Employee, ManufacturingOrder, STRING, STRING],
+            boardMove[WorkAllocation, ManufacturingOrder, STRING],
+            boardRelease[WorkAllocation, STRING],
+            boardSplit[WorkAllocation, ManufacturingOrder, NUMERIC[5,2], STRING],
+            boardSaveAllocation[WorkAllocation, STRING, STRING, NUMERIC[5,2]]
+
+    EVENTS ON INIT {
+        boardDate() <- currentDate();
+        planningRange() <- PlanningRange.day;
+    }
+;
+
+DESIGN workPlanning {
+    OBJECTS {
+        NEW header FIRST {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE GRID(b) {
+                flex = 1;
+                height = 40;
+            }
+            // блок периода подписан текущим диапазоном планирования
+            NEW period {
+                caption = periodCaption();
+                border = TRUE;
+                alignment = START;
+                MOVE PROPERTY(todayPeriod()) { alignment = STRETCH; }
+                NEW periodRow {
+                    horizontal = TRUE;
+                    alignment = START;
+                    MOVE PROPERTY(prevPeriod());
+                    MOVE PROPERTY(boardDate());
+                    MOVE PROPERTY(nextPeriod());
+                    MOVE PROPERTY(captionPlanningRange());
+                    MOVE PROPERTY(customFrom());
+                    MOVE PROPERTY(customTo());
+                }
+            }
+        }
+        NEW body {
+            horizontal = TRUE;
+            // без переноса строк «Свободные» и доска растягиваются на всю высоту формы
+            wrap = FALSE;
+            fill = 1;
+            alignment = STRETCH;
+            // «Свободные»: фильтры по людям над списком, ширина фиксирована, по высоте — вровень с доской
+            NEW freePane {
+                width = 230;
+                flex = 0;
+                alignment = STRETCH;
+                NEW freeFilters {
+                    alignment = STRETCH;
+                    MOVE PROPERTY(nameFilterDepartment()) { captionVertical = TRUE; alignment = STRETCH; }
+                    MOVE PROPERTY(nameFilterPosition()) { captionVertical = TRUE; alignment = STRETCH; }
+                }
+                MOVE GRID(e) {
+                    fill = 1;
+                    alignment = STRETCH;
+                    height = 300;
+                }
+            }
+            // доска: фильтры по заказам над колонками
+            NEW boardPane {
+                fill = 1;
+                alignment = STRETCH;
+                NEW boardFilters {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(nameFilterResponsible());
+                    MOVE PROPERTY(showDone());
+                }
+                MOVE GRID(a) {
+                    fill = 1;
+                    width = 400;
+                    height = 400;
+                }
+            }
+        }
+        REMOVE BOX(b);
+        REMOVE BOX(e);
+        REMOVE BOX(a);
+    }
+}
+
+// отдельная папка планирования: сюда же на этапе 2 ляжет диаграмма Ганта
+NAVIGATOR {
+    manufacturing {
+        NEW FOLDER planning 'Планирование' AFTER operations {
+            NEW workPlanning;
+        }
+    }
+}
+
+onWebClientInit() + {
+    onWebClientInit(r'workboard.js') <- 6;
+    onWebClientInit(r'workboard.css') <- 6;
+}

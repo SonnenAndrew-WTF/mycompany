@@ -6,4 +6,5 @@ REQUIRE MyCompanyCustom, MyCompanyRu,
         PayslipBatchExtension,
         payslipTotalExtra,
         EmployeeExtra,
-        CommentImagesExtra;
+        CommentImagesExtra,
+        WorkPlanning;
