@@ -156,6 +156,16 @@
     white-space: nowrap;
 }
 
+/* статус заказа: цвет фона — цвет статуса из настроек */
+.wb-status {
+    display: inline-block;
+    padding: 0 6px;
+    border-radius: 8px;
+    line-height: 16px;
+    color: #222;
+    background: rgba(0, 0, 0, 0.08);
+}
+
 .wb-col-wide {
     grid-column: 1 / -1;
 }

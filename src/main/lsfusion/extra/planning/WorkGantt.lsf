@@ -1,0 +1,139 @@
+MODULE WorkGantt;
+
+REQUIRE WorkPlanning;
+
+NAMESPACE Manufacturing;
+
+// Вкладка «Гант» формы «Доски распределения»: строка заказа — полоса от начала до планового завершения,
+// раскрывается в строки людей с их распределениями (workgantt.js). Доска, диапазон и фильтры — общие с доской.
+
+// Гант показывает не меньше двух недель: в режиме «День» одна колонка ничего не говорит о сроках
+ganttTo () = MAX periodTo(), sum(periodFrom(), 13);
+
+// распределение без «Даты по» рисуется до планового завершения заказа, без него — до конца диаграммы
+ganttEnd (WorkAllocation a) = OVERRIDE toDate(a), (planeDateTime(order(a)) IF planeDateTime(order(a)) >= fromDate(a)), ganttTo();
+
+// отделённые плашки и несколько плашек сотрудника — как на доске, но за период диаграммы
+ganttChild (WorkAllocation a) = parent(a) AND overlaps(parent(a), periodFrom(), ganttTo());
+ganttSplit (WorkAllocation a) = countAllocations(employee(a), periodFrom(), ganttTo()) > 1;
+
+// фильтр по сотруднику — только на Ганте: остаются его строки и заказы, на которых он стоит в периоде
+filterEmployee = DATA LOCAL Employee ();
+nameFilterEmployee 'Сотрудник' () = name(filterEmployee());
+countAllocations (ManufacturingOrder o, Employee e, DATE from, DATE to) =
+    GROUP SUM 1 IF order(WorkAllocation a) = o AND employee(a) = e AND overlaps(a, from, to);
+
+ganttOrders (WorkBoard b) = JSON FROM
+    id = ManufacturingOrder o, number = number(o), item = STRING[100](nameItem(o)), note = STRING[100](note(o)),
+    partner = STRING[100](namePartner(o)), responsible = STRING[100](nameResponsible(o)),
+    start = scheduledDate(o), end = planeDateTime(o), daysLeft = daysLeft(o), done = done(o),
+    status = STRING[50](nameStatus(o)), statusColor = colorStatus(o),
+    locked = (TRUE IF (readonly(o) OR done(o)))
+    WHERE shown(o, b, periodFrom(), ganttTo()) AND
+          (NOT filterEmployee() OR countAllocations(o, filterEmployee(), periodFrom(), ganttTo()))
+    ORDER scheduledDateTime(o), o
+    TOP 100;
+
+workGanttI18n () = JSON FROM
+    order = 'Заказ / сотрудник',
+    emptyGantt = 'На доске нет заказов за этот период',
+    expandAll = 'Развернуть все',
+    collapseAll = 'Свернуть все',
+    hint = 'Полосу можно перетащить или растянуть за край; щелчок — правка',
+    hoursShort = 'ч',
+    daysShort = 'дн.',
+    overdue = 'просрочен на',
+    done = 'выполнен',
+    noPlan = 'нет срока',
+    openEnd = 'до перевода',
+    partnerLabel = 'Контрагент',
+    responsibleLabel = 'Ответственный',
+    statusLabel = 'Статус',
+    startLabel = 'Начало',
+    endLabel = 'Плановое завершение',
+    endHint = 'Пусто — срок не задан',
+    leftLabel = 'Осталось',
+    locked = 'Заказ закрыт для изменений',
+    child = 'Отделённая плашка',
+    fromDate = 'Дата с',
+    toDate = 'Дата по',
+    toDateHint = 'Пусто — до перевода на другой заказ',
+    hours = 'Часов в день',
+    save = 'Сохранить',
+    release = 'Снять с заказа',
+    people = 'чел.';
+
+// обёртка для workgantt.js: новые сроки заказа, даты приходят строкой ГГГГ-ММ-ДД
+ganttSaveOrder (ManufacturingOrder o, STRING start, STRING end) {
+    IF NOT (o IS ManufacturingOrder AND start AND NOT start = r'') OR readonly(o) OR done(o) OR canceled(o) THEN RETURN;
+    // пустое плановое завершение приходит пустой строкой — срок снимается; '' не NULL, проверяем явно
+    IF end AND NOT end = r'' AND toDateFormat(end, r'YYYY-MM-DD') < toDateFormat(start, r'YYYY-MM-DD') THEN RETURN;
+    NEWSESSION {
+        // время начала сохраняется, меняется только дата
+        scheduledDateTime(o) <- toDateTime(toDateFormat(start, r'YYYY-MM-DD'), OVERRIDE toTime(scheduledDateTime(o)), 00:00);
+        planeDateTime(o) <- toDateFormat(end, r'YYYY-MM-DD') IF end AND NOT end = r'';
+        APPLY;
+    }
+}
+
+EXTEND FORM workPlanning
+    // фильтры доски — те же свойства, ещё раз над диаграммой
+    PROPERTIES() ganttResponsible = nameFilterResponsible, ganttOrderSearch = orderSearch, ganttShowDone = showDone,
+                 ganttDepartment = nameFilterDepartment, ganttPosition = nameFilterPosition, nameFilterEmployee
+    PROPERTIES() ganttType = nameFilterType ON CHANGE changeFilterType(b)
+
+    OBJECTS g = WorkAllocation CUSTOM 'workGantt'
+                OPTIONS JSON FROM orders = ganttOrders(b), from = periodFrom(), to = ganttTo(), today = currentDate(),
+                                  actionDate = actionDate(), dayHours = workDayHours(), i18n = workGanttI18n()
+                PAGESIZE 0
+    PROPERTIES(g) READONLY gName = nameEmployee, gPosition = namePosition, gEmployee = employee, gOrder = order,
+                           gFrom = fromDate, gTo = toDate, gEnd = ganttEnd, gHours = hours, gDayHours = dayHours,
+                           gChild = ganttChild, gSplit = ganttSplit
+    PROPERTIES READONLY gid = (LONG(g))
+    ORDERS gPosition, gName, gFrom, gid
+    FILTERS board(order(g)) = b, overlaps(g, periodFrom(), ganttTo()), shown(order(g), b, periodFrom(), ganttTo()),
+            NOT filterDepartment() OR department(employee(g)) = filterDepartment(),
+            NOT filterPosition() OR position(employee(g)) = filterPosition(),
+            NOT filterEmployee() OR employee(g) = filterEmployee()
+
+    CUSTOMS ganttSaveOrder[ManufacturingOrder, STRING, STRING]
+;
+
+DESIGN workPlanning {
+    OBJECTS {
+        NEW planningTabs AFTER header {
+            tabbed = TRUE;
+            fill = 1;
+            alignment = STRETCH;
+            MOVE body { caption = 'Доска'; }
+            NEW ganttPane {
+                caption = 'Гант';
+                fill = 1;
+                alignment = STRETCH;
+                // фильтры по заказам и по людям над диаграммой
+                NEW ganttFilters {
+                    horizontal = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(ganttResponsible);
+                    MOVE PROPERTY(ganttType) { select = 'dropdown'; }
+                    MOVE PROPERTY(ganttOrderSearch);
+                    MOVE PROPERTY(ganttShowDone);
+                    MOVE PROPERTY(ganttDepartment);
+                    MOVE PROPERTY(ganttPosition);
+                    MOVE PROPERTY(nameFilterEmployee());
+                }
+                MOVE GRID(g) {
+                    fill = 1;
+                    width = 400;
+                    height = 400;
+                }
+            }
+        }
+        REMOVE BOX(g);
+    }
+}
+
+onWebClientInit() + {
+    onWebClientInit(r'workgantt.js') <- 7;
+    onWebClientInit(r'workgantt.css') <- 7;
+}

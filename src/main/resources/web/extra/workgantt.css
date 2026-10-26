@@ -1,0 +1,400 @@
+/* Диаграмма Ганта по заказам (workgantt.js); всплывающие окна и кнопки — из workboard.css */
+
+/* тело диаграммы лежит абсолютно и прокручивается внутри, чтобы сотня дней и строк
+   не раздувала контейнер формы */
+.wg-root {
+    position: relative;
+    height: 100%;
+    min-width: 0;
+}
+
+.wg-toolbar {
+    height: 30px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 4px 4px;
+}
+
+.wg-hint {
+    font-size: 11px;
+    opacity: 0.7;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.wg-scroll {
+    position: absolute;
+    top: 30px;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    overflow: auto;
+    border: 1px solid var(--grid-separator-border-color, rgba(0, 0, 0, 0.15));
+    border-radius: 6px;
+}
+
+.wg-content {
+    position: relative;
+    min-height: 100%;
+}
+
+.wg-empty {
+    padding: 16px;
+    opacity: 0.7;
+}
+
+/* шкала: месяцы сверху, дни (или понедельники) снизу; прилипает к верху при прокрутке */
+.wg-head {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    display: flex;
+    height: 40px;
+    background: var(--background-color, #fff);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.wg-corner {
+    position: sticky;
+    left: 0;
+    z-index: 4;
+    flex: 0 0 280px;
+    box-sizing: border-box;
+    padding: 12px 8px;
+    font-weight: 600;
+    font-size: 12px;
+    background: var(--background-color, #fff);
+    border-right: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.wg-time {
+    position: relative;
+    flex: 0 0 auto;
+}
+
+.wg-month,
+.wg-day {
+    position: absolute;
+    box-sizing: border-box;
+    overflow: hidden;
+    white-space: nowrap;
+    font-size: 11px;
+    text-align: center;
+}
+
+.wg-month {
+    top: 0;
+    height: 20px;
+    line-height: 20px;
+    font-weight: 600;
+    border-left: 1px solid rgba(0, 0, 0, 0.15);
+    text-transform: capitalize;
+}
+
+.wg-day {
+    top: 20px;
+    height: 20px;
+    line-height: 20px;
+    opacity: 0.8;
+}
+
+.wg-day.wg-weekend {
+    color: #c62828;
+}
+
+.wg-day.wg-today {
+    font-weight: 700;
+    opacity: 1;
+    background: rgba(229, 57, 53, 0.15);
+    border-radius: 4px;
+}
+
+/* фон: сетка дней, выходные, линия «сегодня» */
+.wg-bg {
+    position: absolute;
+    z-index: 0;
+    pointer-events: none;
+}
+
+.wg-bg-lines {
+    background-image: linear-gradient(to right, rgba(0, 0, 0, 0.06) 1px, transparent 1px);
+    background-size: var(--wg-px) 100%;
+}
+
+.wg-bg-weekend {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.045);
+}
+
+.wg-bg-today {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    margin-left: -1px;
+    background: #e53935;
+}
+
+/* строки */
+.wg-rows {
+    position: relative;
+}
+
+.wg-row {
+    position: relative;
+    display: flex;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.wg-row-order {
+    height: 30px;
+    border-top: 1px solid rgba(0, 0, 0, 0.14);
+}
+
+.wg-row-person {
+    height: 26px;
+}
+
+.wg-label {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    flex: 0 0 280px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px;
+    overflow: hidden;
+    font-size: 12px;
+    background: var(--background-color, #fff);
+    border-right: 1px solid rgba(0, 0, 0, 0.2);
+}
+
+.wg-row-order .wg-label {
+    font-weight: 600;
+    cursor: pointer;
+    background: linear-gradient(rgba(74, 144, 217, 0.08), rgba(74, 144, 217, 0.08)), var(--background-color, #fff);
+}
+
+.wg-toggle {
+    flex: 0 0 12px;
+    opacity: 0.7;
+}
+
+.wg-status-dot {
+    flex: 0 0 10px;
+    height: 10px;
+    border-radius: 50%;
+    box-sizing: border-box;
+    border: 1px solid rgba(0, 0, 0, 0.25);
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.wg-label-text {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wg-label-pos {
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 11px;
+    opacity: 0.65;
+}
+
+.wg-count {
+    flex: 0 0 auto;
+    font-size: 11px;
+    font-weight: 400;
+    padding: 0 5px;
+    border-radius: 8px;
+    background: rgba(0, 0, 0, 0.07);
+}
+
+/* строка человека: отступ и цвет должности слева, как у плашки на доске */
+.wg-row-person .wg-label {
+    padding-left: 26px;
+    border-left: 4px solid hsl(var(--wb-hue, 210), 55%, 50%);
+}
+
+.wg-row-person.wg-child .wg-label-text::before {
+    content: "↳ ";
+    opacity: 0.7;
+}
+
+.wg-row-person.wg-child .wg-label {
+    background: linear-gradient(rgba(255, 152, 0, 0.08), rgba(255, 152, 0, 0.08)), var(--background-color, #fff);
+}
+
+.wg-row-person.wg-split .wg-label-text {
+    text-decoration: underline dotted rgba(255, 152, 0, 0.9);
+}
+
+.wg-row-person.wg-related .wg-label {
+    background: linear-gradient(rgba(255, 152, 0, 0.22), rgba(255, 152, 0, 0.22)), var(--background-color, #fff);
+}
+
+.wg-row-person.wg-related .wg-bar {
+    box-shadow: 0 0 0 2px #ff9800;
+}
+
+.wg-track {
+    position: relative;
+    flex: 0 0 auto;
+    z-index: 1;
+}
+
+/* полосы */
+.wg-bar {
+    position: absolute;
+    top: 4px;
+    bottom: 4px;
+    box-sizing: border-box;
+    border-radius: 4px;
+    cursor: grab;
+    user-select: none;
+    touch-action: none;
+    overflow: hidden;
+    font-size: 11px;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+}
+
+.wg-bar-text {
+    padding: 0 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    pointer-events: none;
+}
+
+.wg-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 7px;
+    cursor: ew-resize;
+}
+
+.wg-handle-start {
+    left: 0;
+}
+
+.wg-handle-end {
+    right: 0;
+}
+
+.wg-bar-order {
+    top: 5px;
+    bottom: 5px;
+    background: #4a90d9;
+    color: #fff;
+    font-weight: 600;
+}
+
+.wg-bar-order.wg-overdue {
+    background: #e53935;
+}
+
+.wg-bar-order.wg-done {
+    background: #43a047;
+}
+
+/* заказ без планового завершения: однодневная полоса, обрыв справа */
+.wg-bar-order.wg-noplan {
+    background: repeating-linear-gradient(45deg, #4a90d9, #4a90d9 6px, #6aa6e3 6px, #6aa6e3 12px);
+    border-right: 3px dashed #fff;
+    overflow: visible;
+}
+
+.wg-bar-order.wg-noplan .wg-bar-text {
+    overflow: visible;
+    color: #1f4f80;
+    margin-left: calc(100% + 2px);
+    padding: 0 4px;
+}
+
+.wg-late {
+    position: absolute;
+    top: 9px;
+    bottom: 9px;
+    background: repeating-linear-gradient(45deg, rgba(229, 57, 53, 0.45), rgba(229, 57, 53, 0.45) 4px, transparent 4px, transparent 8px);
+}
+
+.wg-bar-person {
+    background: hsl(var(--wb-hue, 210), 55%, 62%);
+    color: #fff;
+}
+
+/* распределение без «Даты по»: бледнее, тянется до планового завершения заказа */
+.wg-bar-person.wg-open {
+    opacity: 0.45;
+    border-right: 2px dashed hsl(var(--wb-hue, 210), 55%, 35%);
+}
+
+.wg-bar-person.wg-bar-child {
+    border: 1px dashed rgba(255, 152, 0, 0.95);
+    background: repeating-linear-gradient(135deg, hsl(var(--wb-hue, 210), 55%, 62%), hsl(var(--wb-hue, 210), 55%, 62%) 6px, hsl(var(--wb-hue, 210), 55%, 70%) 6px, hsl(var(--wb-hue, 210), 55%, 70%) 12px);
+}
+
+/* полоса обрезана краем диаграммы */
+.wg-bar.wg-clip-start {
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+}
+
+.wg-bar.wg-clip-end {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+}
+
+.wg-bar.wg-clip-start .wg-handle-start,
+.wg-bar.wg-clip-end .wg-handle-end,
+.wg-bar.wg-out .wg-handle,
+.wg-bar.wg-locked .wg-handle {
+    display: none;
+}
+
+/* полоса целиком за краем диаграммы — короткая метка у края, подпись справа от неё */
+.wg-bar.wg-out {
+    opacity: 0.55;
+    cursor: pointer;
+    overflow: visible;
+}
+
+.wg-bar.wg-out .wg-bar-text {
+    overflow: visible;
+    margin-left: calc(100% + 2px);
+    padding: 0 4px;
+    color: var(--text-color, #333);
+    font-weight: 400;
+}
+
+.wg-bar.wg-locked {
+    cursor: pointer;
+}
+
+.wg-bar.wg-dragging {
+    opacity: 0.8;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    z-index: 5;
+}
+
+.wg-tool {
+    font-size: 12px;
+    padding: 2px 8px;
+}
