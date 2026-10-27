@@ -7,4 +7,4 @@ REQUIRE MyCompanyCustom, MyCompanyRu,
         payslipTotalExtra,
         EmployeeExtra,
         CommentImagesExtra,
-        WorkPlanning, WorkGantt;
+        WorkPlanning, WorkGantt, WorkTeamPlanning, WorkLoad;

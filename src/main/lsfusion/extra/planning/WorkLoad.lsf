@@ -1,0 +1,161 @@
+MODULE WorkLoad;
+
+REQUIRE WorkGantt, WorkAbsence, ProjectManufacturingOrderTimeEntry, NumericUtils;
+
+NAMESPACE Manufacturing;
+
+// Вкладка «Загрузка людей» формы «Доски распределения»: сотрудник × день за период доски.
+// В ячейке — план (часы распределений) и факт (табель); перегрузка и недогрузка против нормы дня
+// подсвечены фоном, расхождение плана с табелем — красным текстом и «!». Табель не меняется.
+
+// допуск: разница плана и факта за день в его пределах расхождением не считается
+dataLoadTolerance 'Допуск расхождения план/факт, ч' = DATA NUMERIC[5,2] ();
+loadTolerance () = OVERRIDE dataLoadTolerance(), 2.0;
+
+planHours 'План, ч' (Employee e, DATE d) = GROUP SUM NUMERIC[8,2](dayHours(WorkAllocation a)) IF employee(a) = e AND overlaps(a, d, d);
+planHours 'План, ч' (Employee e, ManufacturingOrder o, DATE d) =
+    GROUP SUM NUMERIC[8,2](dayHours(WorkAllocation a)) IF employee(a) = e AND order(a) = o AND overlaps(a, d, d);
+factHours 'Факт, ч' (Employee e, ManufacturingOrder o, DATE d) =
+    GROUP SUM hours(TimeEntry t) IF employee(t) = e AND manufacturingOrder(t) = o AND date(t) = d;
+
+// план за период: часы в день распределения на число его дней внутри периода
+planHours 'План, ч' (Employee e, DATE from, DATE to) =
+    GROUP SUM NUMERIC[10,2](dayHours(WorkAllocation a)) *
+        (daysBetweenDates((MIN (OVERRIDE toDate(a), to), to), (MAX fromDate(a), from)) + 1)
+        IF employee(a) = e AND overlaps(a, from, to);
+
+weekday (DATE d) = extractDOWNumber(d) >= 1 AND extractDOWNumber(d) <= 5;
+overload (Employee e, DATE d) = planHours(e, d) > workDayHours();
+underload (Employee e, DATE d) = weekday(d) AND NOT planHours(e, d) >= workDayHours() AND NOT absent(e, d);
+
+// расхождение — только по прошедшим дням и сегодня: план и табель по разным заказам,
+// или итог дня отличается больше допуска (в том числе план есть, а табель не заполнен, и наоборот)
+mismatchOrders (Employee e, DATE d) = GROUP SUM 1 IF
+    (planHours(e, ManufacturingOrder o, d) AND NOT factHours(e, o, d)) OR (factHours(e, o, d) AND NOT planHours(e, o, d));
+// в день недоступности без плана табель (отпуск, больничный) расхождением не считается
+mismatch (Employee e, DATE d) = d <= currentDate() AND NOT (absent(e, d) AND NOT planHours(e, d)) AND
+    (mismatchOrders(e, d) OR abs((OVERRIDE planHours(e, d), 0.0) - (OVERRIDE hours(d, e), 0.0)) > loadTolerance());
+
+// «план/факт», пустой план — «–», расхождение отмечено «!»; в день недоступности без плана и факта — причина
+loadText 'Загрузка' (Employee e, DATE d) = CONCAT '',
+    captionReason(absence(e, d)) IF NOT (planHours(e, d) OR hours(d, e)),
+    (CONCAT '/', (OVERRIDE trimScale(planHours(e, d)), '–'), trimScale(hours(d, e))) IF (planHours(e, d) OR hours(d, e)),
+    '!' IF mismatch(e, d)
+    CHARWIDTH 5;
+loadBackground (Employee e, DATE d) = CASE
+    WHEN overload(e, d) THEN RGB(255, 205, 205)
+    WHEN absent(e, d) THEN RGB(215, 230, 250)
+    WHEN underload(e, d) THEN RGB(255, 243, 200)
+    WHEN NOT weekday(d) THEN RGB(238, 238, 238);
+loadForeground (Employee e, DATE d) = RGB(200, 0, 0) IF mismatch(e, d);
+
+loadHeader (DATE d) = toChar(d, r'DD.MM') + ' ' + (CASE
+    WHEN extractDOWNumber(d) = 1 THEN 'пн' WHEN extractDOWNumber(d) = 2 THEN 'вт' WHEN extractDOWNumber(d) = 3 THEN 'ср'
+    WHEN extractDOWNumber(d) = 4 THEN 'чт' WHEN extractDOWNumber(d) = 5 THEN 'пт' WHEN extractDOWNumber(d) = 6 THEN 'сб'
+    ELSE 'вс');
+
+countOverload 'Дней перегрузки' (Employee e, DATE from, DATE to) = GROUP SUM 1 IF overload(e, DATE d) AND iterate(d, from, to);
+countUnderload 'Дней недогрузки' (Employee e, DATE from, DATE to) = GROUP SUM 1 IF underload(e, DATE d) AND iterate(d, from, to);
+countMismatch 'Дней с расхождением' (Employee e, DATE from, DATE to) = GROUP SUM 1 IF mismatch(e, DATE d) AND iterate(d, from, to);
+
+// границы периода доски, запомненные значениями: выражение периода (день / неделя / месяц / свой) внутри
+// агрегатов по дням разворачивается в слишком длинный SQL-запрос
+loadFrom = DATA LOCAL DATE ();
+loadTo = DATA LOCAL DATE ();
+WHEN LOCAL FORMS workPlanning CHANGED(periodFrom()) OR CHANGED(periodTo()) DO {
+    loadFrom() <- periodFrom();
+    loadTo() <- periodTo();
+}
+
+loadLegend () = 'Загрузка: план / факт по табелю, ч. Красный фон — больше нормы дня (' + trimScale(workDayHours()) +
+    ' ч), жёлтый — меньше нормы в будний день, голубой — недоступен, красный текст и «!» — табель расходится с планом (по заказам или больше чем на ' +
+    trimScale(loadTolerance()) + ' ч). Щелчок по ячейке — раскладка по заказам.';
+
+// раскладка дня: план и табель по заказам и записи табеля
+FORM workLoadDay 'Загрузка за день'
+    OBJECTS e = Employee PANEL, d = DATE PANEL
+    PROPERTIES READONLY name(e), dayDate 'Дата' = VALUE(d), dayPlan 'План, ч' = planHours(e, d), dayFact 'Факт, ч' = hours(d, e)
+
+    OBJECTS o = ManufacturingOrder
+    PROPERTIES(o) READONLY number
+    PROPERTIES READONLY planHours(e, o, d), factHours(e, o, d)
+    ORDERS number(o)
+    FILTERS planHours(e, o, d) OR factHours(e, o, d)
+
+    OBJECTS t = TimeEntry
+    PROPERTIES(t) READONLY nameProject, numberDateManufacturingOrder, nameType, hours, description
+    FILTERS employee(t) = e, date(t) = d
+;
+
+DESIGN workLoadDay {
+    OBJECTS {
+        NEW dayHeader FIRST {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(e));
+            MOVE PROPERTY(dayDate);
+            MOVE PROPERTY(dayPlan);
+            MOVE PROPERTY(dayFact);
+        }
+        MOVE BOX(o) { caption = 'План и табель по заказам'; }
+        MOVE BOX(t) { caption = 'Записи табеля'; }
+    }
+}
+
+showLoadDay (Employee e, DATE d) {
+    SHOW workLoadDay OBJECTS e = e, d = d FLOAT;
+}
+
+EXTEND FORM workPlanning
+    PROPERTIES() READONLY loadLegend
+
+    OBJECTS ld = DATE
+    FILTERS iterate(ld, loadFrom(), loadTo())
+
+    OBJECTS le = Employee
+    PROPERTIES(le) READONLY leName = name, lePosition = namePosition
+    PROPERTIES load = loadText(le, ld) COLUMNS (ld) HEADER loadHeader(ld)
+               BACKGROUND loadBackground(le, ld) FOREGROUND loadForeground(le, ld)
+               ON CHANGE showLoadDay(le, ld)
+    PROPERTIES READONLY lePlan = planHours(le, loadFrom(), loadTo()), leFact = hours(le, loadFrom(), loadTo()),
+                        leOverload = countOverload(le, loadFrom(), loadTo()), leUnderload = countUnderload(le, loadFrom(), loadTo()),
+                        leMismatch = countMismatch(le, loadFrom(), loadTo())
+    ORDERS lePosition, leName
+    FILTERS inPool(b, le),
+            NOT filterDepartment() OR department(le) = filterDepartment(),
+            NOT filterPosition() OR position(le) = filterPosition()
+    FILTERGROUP loadProblems
+        FILTER 'Перегрузка' countOverload(le, loadFrom(), loadTo())
+        FILTER 'Недогрузка' countUnderload(le, loadFrom(), loadTo())
+        FILTER 'Расхождения с табелем' countMismatch(le, loadFrom(), loadTo())
+;
+
+DESIGN workPlanning {
+    planningTabs {
+        NEW loadPane {
+            caption = 'Загрузка людей';
+            fill = 1;
+            alignment = STRETCH;
+            MOVE PROPERTY(loadLegend()) {
+                caption = '';
+                alignment = STRETCH;
+            }
+            MOVE BOX(le) {
+                caption = '';
+                fill = 1;
+                // пустая ячейка — пустая, без подписи «Не определено»
+                PROPERTY(load) { placeholder = ''; }
+            }
+        }
+    }
+}
+
+EXTEND FORM options
+    PROPERTIES() dataLoadTolerance
+;
+
+DESIGN options {
+    commons {
+        MOVE PROPERTY(dataLoadTolerance());
+    }
+}

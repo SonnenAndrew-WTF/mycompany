@@ -1,0 +1,82 @@
+MODULE WorkTeam;
+
+REQUIRE WorkBoard;
+
+NAMESPACE Manufacturing;
+
+// Звено: постоянная группа людей с бригадиром, которую ставят на заказ одной плашкой.
+// По справочнику человек числится в одном звене; на доске его можно на время поставить в другое —
+// звено, в котором он работает на заказе, хранит само распределение (WorkAllocation).
+CLASS WorkTeam 'Звено';
+TABLE workTeam (WorkTeam);
+
+name 'Наименование' = DATA ISTRING[50] (WorkTeam) NONULL TABLE workTeam IN id CHARWIDTH 20;
+foreman = DATA Employee (WorkTeam) TABLE workTeam;
+nameForeman 'Бригадир' (WorkTeam t) = name(foreman(t)) IN base;
+archived 'Архив' = DATA BOOLEAN (WorkTeam) TABLE workTeam IN base;
+
+TABLE workTeamEmployee (Employee) NODEFAULT;
+team = DATA WorkTeam (Employee) TABLE workTeamEmployee INDEXED;
+nameTeam 'Звено' (Employee e) = name(team(e));
+
+// выбранный бригадир входит в своё звено
+WHEN LOCAL SETCHANGED(foreman(WorkTeam t)) DO team(foreman(t)) <- t;
+CONSTRAINT foreman(WorkTeam t) AND NOT team(foreman(t)) = t
+    MESSAGE 'Бригадир должен входить в состав своего звена';
+
+in 'Вкл.' (WorkTeam t, Employee e) = team(e) = t;
+// галочка состава: отмеченный переходит в это звено из прежнего
+changeIn (WorkTeam t, Employee e) {
+    team(e) <- IF team(e) = t THEN NULL ELSE t;
+}
+
+countMembers 'Человек' (WorkTeam t) = GROUP SUM 1 IF team(Employee e) = t AND active(e);
+members 'Состав' (WorkTeam t) = GROUP CONCAT name(Employee e) IF team(e) = t AND active(e), ', ' ORDER name(e), e CHARWIDTH 40;
+
+// состав выбирается галочками по всем действующим сотрудникам (как в подборе), «Состав» оставляет только отмеченных
+FORM workTeam 'Звено'
+    OBJECTS t = WorkTeam PANEL
+    PROPERTIES(t) name, nameForeman, archived
+
+    OBJECTS e = Employee
+    PROPERTIES(t, e) in ON CHANGE changeIn(t, e)
+    PROPERTIES(e) READONLY name, namePosition, nameDepartment, nameTeam
+    ORDERS name(e)
+    FILTERS active(e)
+    FILTERGROUP selectedMembers
+        FILTER 'Состав' in(t, e) DEFAULT
+
+    EDIT WorkTeam OBJECT t
+;
+
+DESIGN workTeam {
+    OBJECTS {
+        NEW teamHeader FIRST {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(name(t));
+            MOVE PROPERTY(nameForeman(t));
+            MOVE PROPERTY(archived(t));
+        }
+        MOVE BOX(e) { caption = 'Состав звена'; fill = 1; }
+    }
+}
+
+FORM workTeams 'Звенья' IMAGE 'bi bi-people'
+    OBJECTS t = WorkTeam
+    PROPERTIES(t) READONLY name, nameForeman, countMembers, members, archived
+    PROPERTIES(t) NEWSESSION NEW, EDIT, DELETE
+    ORDERS name(t)
+    FILTERGROUP activeTeams
+        FILTER 'Действующие' NOT archived(t) DEFAULT
+
+    LIST WorkTeam OBJECT t
+;
+
+NAVIGATOR {
+    manufacturing {
+        settings {
+            NEW workTeams;
+        }
+    }
+}
