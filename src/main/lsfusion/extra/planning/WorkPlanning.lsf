@@ -7,7 +7,10 @@ NAMESPACE Manufacturing;
 // Форма «Доски распределения»: доска с колонками заказов и плашками людей (workboard.js).
 
 boardDate 'Дата' = DATA LOCAL DATE ();
-showDone 'Показать выполненные' = DATA LOCAL BOOLEAN ();
+// статус заказов доски: пусто — «Активные» (не выполненные и не отменённые), как в списке производственных заказов
+filterStatus = DATA LOCAL ManufacturingOrderStatus ();
+// name — как у nameStatus заказа: у статусов документа своё наименование
+captionFilterStatus 'Статус заказа' () = name(filterStatus());
 
 filterDepartment = DATA LOCAL Department ();
 nameFilterDepartment 'Подразделение' () = name(filterDepartment());
@@ -53,7 +56,7 @@ periodTo () = CASE
     WHEN planningRange() = PlanningRange.month THEN lastDayOfMonth(boardDate())
     WHEN isCustom() THEN (MAX periodFrom(), (OVERRIDE customTo(), periodFrom()))
     ELSE boardDate();
-periodCaption () = 'Диапазон планирования: ' + (IF periodFrom() = periodTo()
+periodCaption () = 'Период: ' + (IF periodFrom() = periodTo()
     THEN extractDOWName(periodFrom()) + ', ' + toChar(periodFrom(), r'DD.MM.YYYY')
     ELSE toChar(periodFrom(), r'DD.MM') + ' – ' + toChar(periodTo(), r'DD.MM.YYYY'));
 
@@ -87,17 +90,63 @@ todayPeriod 'Сегодня' () {
     boardDate() <- currentDate();
 }
 
+// поля «С» и «по» в режимах неделя / месяц / свой диапазон показывают границы периода;
+// в неделе и месяце выбранная дата переносит период на свою неделю (месяц), в своём диапазоне — меняет границу
+isDay () = NOT planningRange() OR planningRange() = PlanningRange.day;
+changeRangeFrom () {
+    INPUT d = DATE DO {
+        IF isCustom() THEN {
+            customFrom() <- d;
+            IF customTo() < d THEN customTo() <- d;
+        } ELSE
+            boardDate() <- d;
+    }
+}
+changeRangeTo () {
+    INPUT d = DATE DO {
+        IF isCustom() THEN {
+            customTo() <- d;
+            IF customFrom() > d THEN customFrom() <- d;
+        } ELSE
+            boardDate() <- d;
+    }
+}
+
+// мини-календарь периода (workBoardCalendar): месяц начала периода, листается стрелками;
+// сетка — с понедельника недели первого числа по воскресенье недели последнего
+calendarMonth = DATA LOCAL DATE ();
+calendarFrom () = sum(calendarMonth(), -numberM(extractDOW(calendarMonth())));
+calendarTo () = sum(lastDayOfMonth(calendarMonth()), 6 - numberM(extractDOW(lastDayOfMonth(calendarMonth()))));
+calendarCaption () = extractMonthName(calendarMonth()) + ' ' + extractYear(calendarMonth());
+
+// щелчок по дню календаря: выбранная дата, свой диапазон сдвигается на неё со своей длиной
+calendarPick (DATE d) {
+    IF isCustom() THEN {
+        LOCAL days = INTEGER ();
+        days() <- daysBetweenDates(periodTo(), periodFrom());
+        customFrom() <- d;
+        customTo() <- sum(d, days());
+    }
+    boardDate() <- d;
+}
+boardCalendarShift (INTEGER n) {
+    calendarMonth() <- sumMonth(calendarMonth(), n);
+}
+
 countAllocations (ManufacturingOrder o, DATE from, DATE to) = GROUP SUM 1 IF order(WorkAllocation a) = o AND overlaps(a, from, to);
 
-// заказы доски за период: активные, начатые к концу периода; выполненные — по галочке, за последние 60 дней;
-// заказ, на котором в периоде стоят люди, виден всегда, чтобы они не «потерялись», — кроме фильтра по типу
-// и поиска по номеру; при поиске ограничения по датам не действуют: находятся все заказы доски с таким номером
-shown (ManufacturingOrder o, WorkBoard b, DATE from, DATE to) = board(o) = b AND NOT canceled(o) AND
+// заказы доски за период по статусу: «Активные» (пусто) или выбранный статус; начатые к концу периода,
+// выполненные — за последние 60 дней; заказ, на котором в периоде стоят люди, виден всегда, чтобы они
+// не «потерялись», — кроме фильтров по статусу, типу и поиска по номеру; при поиске ограничения по датам
+// не действуют: находятся все заказы доски с таким номером
+shown (ManufacturingOrder o, WorkBoard b, DATE from, DATE to) = board(o) = b AND
+    (IF filterStatus() THEN status(o) = filterStatus() ELSE NOT canceled(o)) AND
     (NOT filterType() OR type(o) = filterType()) AND
     (NOT orderSearch() OR ISTRING[50](number(o)) LIKE r'%' + orderSearch() + r'%') AND
     (countAllocations(o, from, to) OR
-        ((IF done(o) THEN showDone() AND (orderSearch() OR NOT DATE(executionDateTime(o)) < sum(from, -60))
+        ((IF done(o) THEN (filterStatus() OR orderSearch()) AND (orderSearch() OR NOT DATE(executionDateTime(o)) < sum(from, -60))
                      ELSE (orderSearch() OR scheduledDate(o) <= to))
+         AND (filterStatus() OR opened(o))
          AND (NOT filterResponsible() OR responsible(o) = filterResponsible())));
 // колонки доски
 shown (ManufacturingOrder o, WorkBoard b) = shown(o, b, periodFrom(), periodTo());
@@ -137,7 +186,27 @@ workBoardI18n () = JSON FROM
     toDateHint = 'Пусто — до перевода на другой заказ',
     release = 'Снять с заказа',
     child = 'Отделённая плашка',
-    dragHint = 'Перетаскивание — перевод на другой заказ, с Ctrl — отделить часть дня';
+    note = 'Примечание',
+    noteHint = 'Кратко: что будет делать?',
+    dragHint = 'Перетаскивание — перевод на другой заказ, с Ctrl — отделить часть дня. Звено тащат за заголовок плашки, человека можно бросить на плашку звена',
+    teams = 'Звенья',
+    foremanLabel = 'Бригадир',
+    people = 'чел.',
+    formTeam = 'Собрать звено',
+    formTeamTitle = 'Новое звено из людей на заказе',
+    teamName = 'Наименование звена',
+    markForeman = 'бригадир',
+    create = 'Создать',
+    leaveTeam = 'Вывести из звена',
+    teamLabel = 'Звено',
+    teamSplitTitle = 'Сколько часов в день отделить от каждого в звене на заказ',
+    absent = 'Недоступные',
+    absentHint = 'Перетащите сюда человека, который заболел или отпросился: его распределения на это время снимутся',
+    absentTitle = 'Недоступен для распределения',
+    reason = 'Причина',
+    untilReturn = 'Пусто — до возвращения',
+    mark = 'Отметить',
+    returnBack = 'Вернуть';
 
 childInPeriod (WorkAllocation a) = parent(a) AND overlaps(parent(a), periodFrom(), periodTo());
 // у сотрудника в периоде несколько плашек — они подсвечиваются как одна «семья»
@@ -163,6 +232,14 @@ boardRelease (WorkAllocation a, STRING from) {
 boardSplit (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, STRING from) {
     split(a, o, h, toDateFormat(from, r'YYYY-MM-DD'));
 }
+// примечание к назначению из карточки плашки; пустое поле приходит пустой строкой ('' не NULL)
+boardSaveNote (WorkAllocation a, STRING n) {
+    IF NOT a IS WorkAllocation THEN RETURN;
+    NEWSESSION {
+        note(a) <- STRING[200](trim(n)) IF n AND NOT trim(n) = r'';
+        APPLY;
+    }
+}
 // карточка плашки на доске: исправление периода и часов самого распределения (без разрезания истории)
 boardSaveAllocation (WorkAllocation a, STRING from, STRING to, NUMERIC[5,2] h) {
     IF NOT (a IS WorkAllocation AND from AND h > 0) THEN RETURN;
@@ -177,14 +254,25 @@ boardSaveAllocation (WorkAllocation a, STRING from, STRING to, NUMERIC[5,2] h) {
 }
 
 FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
-    PROPERTIES() todayPeriod, prevPeriod, boardDate, nextPeriod, captionPlanningRange,
-                 customFrom SHOWIF isCustom(), customTo SHOWIF isCustom(),
-                 nameFilterDepartment, nameFilterPosition, nameFilterResponsible, orderSearch, showDone
+    PROPERTIES() todayPeriod, prevPeriod, boardDate SHOWIF isDay(), nextPeriod, captionPlanningRange,
+                 nameFilterDepartment, nameFilterPosition, nameFilterResponsible, orderSearch, captionFilterStatus
+    PROPERTIES rangeFrom 'С' = periodFrom() SHOWIF NOT isDay() ON CHANGE changeRangeFrom(),
+               rangeTo 'по' = periodTo() SHOWIF NOT isDay() ON CHANGE changeRangeTo()
 
     OBJECTS b = WorkBoard CUSTOM 'workBoardTabs' PAGESIZE 0
     PROPERTIES(b) READONLY name, index
     ORDERS index(b), name(b)
     PROPERTIES() nameFilterType ON CHANGE changeFilterType(b)
+
+    OBJECTS cd = DATE CUSTOM 'workBoardCalendar'
+                OPTIONS JSON FROM caption = calendarCaption()
+                PAGESIZE 0
+    PROPERTIES READONLY calDay = extractDay(cd), calWeekend = (extractDOWNumber(cd) = 0 OR extractDOWNumber(cd) = 6),
+                        calOther = (NOT firstDayOfMonth(cd) = calendarMonth()),
+                        calInPeriod = (cd >= periodFrom() AND cd <= periodTo()), calBoardDate = (cd = boardDate()), calToday = (cd = currentDate())
+    // действие календаря — колонка группы: workboard.js вызывает его через changeProperty
+    PROPERTIES calPick = calendarPick(cd) GRID
+    FILTERS iterate(cd, calendarFrom(), calendarTo())
 
     OBJECTS e = Employee CUSTOM 'workBoardFree'
                 OPTIONS JSON FROM from = periodFrom(), to = periodTo(), actionDate = actionDate(), dayHours = workDayHours(), i18n = workBoardI18n()
@@ -201,7 +289,7 @@ FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
                                   dayHours = workDayHours(), i18n = workBoardI18n()
                 PAGESIZE 0
     PROPERTIES(a) READONLY nameEmployee, namePosition, employee, order, fromDate, toDate, hours, dayHours,
-                           child = childInPeriod, split = splitInPeriod, familyOrder, childOrder
+                           child = childInPeriod, split = splitInPeriod, familyOrder, childOrder, note
     PROPERTIES READONLY aid = (LONG(a))
     ORDERS namePosition(a), nameEmployee(a), familyOrder(a), childOrder(a), aid
     FILTERS board(order(a)) = b, overlaps(a, periodFrom(), periodTo()), shown(order(a), b)
@@ -210,7 +298,9 @@ FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
             boardMove[WorkAllocation, ManufacturingOrder, STRING],
             boardRelease[WorkAllocation, STRING],
             boardSplit[WorkAllocation, ManufacturingOrder, NUMERIC[5,2], STRING],
-            boardSaveAllocation[WorkAllocation, STRING, STRING, NUMERIC[5,2]]
+            boardSaveAllocation[WorkAllocation, STRING, STRING, NUMERIC[5,2]],
+            boardSaveNote[WorkAllocation, STRING],
+            boardCalendarShift[INTEGER]
 
     EVENTS ON INIT {
         boardDate() <- currentDate();
@@ -219,6 +309,9 @@ FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
     // у другой доски свои типы заказов
     ON CHANGE b { filterType() <- NULL; }
 ;
+
+// календарь открывается на месяце начала периода
+WHEN LOCAL FORMS workPlanning CHANGED(periodFrom()) DO calendarMonth() <- firstDayOfMonth(periodFrom());
 
 DESIGN workPlanning {
     OBJECTS {
@@ -229,69 +322,90 @@ DESIGN workPlanning {
                 flex = 1;
                 height = 40;
             }
-            // блок периода подписан текущим диапазоном планирования
-            NEW period {
-                caption = periodCaption();
-                border = TRUE;
-                alignment = START;
-                MOVE PROPERTY(todayPeriod()) { alignment = STRETCH; }
-                NEW periodRow {
-                    horizontal = TRUE;
-                    alignment = START;
-                    MOVE PROPERTY(prevPeriod());
-                    MOVE PROPERTY(boardDate());
-                    MOVE PROPERTY(nextPeriod());
-                    MOVE PROPERTY(captionPlanningRange());
-                    MOVE PROPERTY(customFrom());
-                    MOVE PROPERTY(customTo());
-                }
-            }
         }
-        NEW body {
+        // рабочая область: вкладки (доска, Гант, загрузка) и справа общая для них колонка периода и фильтров
+        NEW workArea {
             horizontal = TRUE;
-            // без переноса строк «Свободные» и доска растягиваются на всю высоту формы
+            // без переноса строк вкладки и колонка справа растягиваются на всю высоту формы
             wrap = FALSE;
             fill = 1;
             alignment = STRETCH;
-            // «Свободные»: фильтры по людям над списком, ширина фиксирована, по высоте — вровень с доской
-            NEW freePane {
-                width = 230;
+            NEW body {
+                horizontal = TRUE;
+                wrap = FALSE;
+                fill = 1;
+                alignment = STRETCH;
+                // «Свободные»: ширина фиксирована, по высоте — вровень с доской
+                NEW freePane {
+                    width = 180;
+                    flex = 0;
+                    alignment = STRETCH;
+                    MOVE GRID(e) {
+                        fill = 1;
+                        alignment = STRETCH;
+                        height = 300;
+                    }
+                }
+                NEW boardPane {
+                    fill = 1;
+                    alignment = STRETCH;
+                    MOVE GRID(a) {
+                        fill = 1;
+                        width = 400;
+                        height = 400;
+                    }
+                }
+            }
+            NEW sidePane {
+                width = 250;
                 flex = 0;
                 alignment = STRETCH;
-                NEW freeFilters {
+                // период подписан текущим диапазоном планирования: календарь месяца, листание, даты, вид диапазона
+                NEW period {
+                    caption = periodCaption();
+                    border = TRUE;
+                    alignment = STRETCH;
+                    MOVE GRID(cd) {
+                        height = 160;
+                        alignment = STRETCH;
+                    }
+                    NEW periodRow {
+                        horizontal = TRUE;
+                        alignment = STRETCH;
+                        MOVE PROPERTY(prevPeriod());
+                        MOVE PROPERTY(todayPeriod()) { flex = 1; }
+                        MOVE PROPERTY(nextPeriod());
+                    }
+                    // день — одна дата, неделя / месяц / свой диапазон — начало и конец
+                    MOVE PROPERTY(boardDate()) { alignment = STRETCH; }
+                    MOVE PROPERTY(rangeFrom) { alignment = STRETCH; }
+                    MOVE PROPERTY(rangeTo) { alignment = STRETCH; }
+                    MOVE PROPERTY(captionPlanningRange()) { caption = ''; alignment = STRETCH; }
+                }
+                NEW orderFilters {
+                    caption = 'Фильтры заказов';
+                    border = TRUE;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(nameFilterResponsible()) { captionVertical = TRUE; alignment = STRETCH; }
+                    // выпадающий список: кнопками семь типов заняли бы всю колонку
+                    MOVE PROPERTY(nameFilterType()) { select = 'dropdown'; captionVertical = TRUE; alignment = STRETCH; }
+                    MOVE PROPERTY(orderSearch()) { captionVertical = TRUE; alignment = STRETCH; }
+                    // пусто — активные (не выполненные и не отменённые), как в списке производственных заказов
+                    MOVE PROPERTY(captionFilterStatus()) { select = 'dropdown'; placeholder = 'Активные'; captionVertical = TRUE; alignment = STRETCH; }
+                }
+                NEW peopleFilters {
+                    caption = 'Фильтры людей';
+                    border = TRUE;
                     alignment = STRETCH;
                     MOVE PROPERTY(nameFilterDepartment()) { captionVertical = TRUE; alignment = STRETCH; }
                     MOVE PROPERTY(nameFilterPosition()) { captionVertical = TRUE; alignment = STRETCH; }
-                }
-                MOVE GRID(e) {
-                    fill = 1;
-                    alignment = STRETCH;
-                    height = 300;
-                }
-            }
-            // доска: фильтры по заказам над колонками
-            NEW boardPane {
-                fill = 1;
-                alignment = STRETCH;
-                NEW boardFilters {
-                    horizontal = TRUE;
-                    alignment = STRETCH;
-                    MOVE PROPERTY(nameFilterResponsible());
-                    // выпадающий список: кнопками семь типов заняли бы всю ширину
-                    MOVE PROPERTY(nameFilterType()) { select = 'dropdown'; }
-                    MOVE PROPERTY(orderSearch());
-                    MOVE PROPERTY(showDone());
-                }
-                MOVE GRID(a) {
-                    fill = 1;
-                    width = 400;
-                    height = 400;
                 }
             }
         }
         REMOVE BOX(b);
         REMOVE BOX(e);
         REMOVE BOX(a);
+        REMOVE BOX(cd);
     }
 }
 

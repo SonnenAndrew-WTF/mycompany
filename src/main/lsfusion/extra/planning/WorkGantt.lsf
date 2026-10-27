@@ -77,10 +77,8 @@ ganttSaveOrder (ManufacturingOrder o, STRING start, STRING end) {
 }
 
 EXTEND FORM workPlanning
-    // фильтры доски — те же свойства, ещё раз над диаграммой
-    PROPERTIES() ganttResponsible = nameFilterResponsible, ganttOrderSearch = orderSearch, ganttShowDone = showDone,
-                 ganttDepartment = nameFilterDepartment, ganttPosition = nameFilterPosition, nameFilterEmployee
-    PROPERTIES() ganttType = nameFilterType ON CHANGE changeFilterType(b)
+    // остальные фильтры — общие с доской, в правой колонке формы
+    PROPERTIES() nameFilterEmployee
 
     OBJECTS g = WorkAllocation CUSTOM 'workGantt'
                 OPTIONS JSON FROM orders = ganttOrders(b), from = periodFrom(), to = ganttTo(), today = currentDate(),
@@ -101,35 +99,30 @@ EXTEND FORM workPlanning
 
 DESIGN workPlanning {
     OBJECTS {
-        NEW planningTabs AFTER header {
-            tabbed = TRUE;
-            fill = 1;
-            alignment = STRETCH;
-            MOVE body { caption = 'Доска'; }
-            NEW ganttPane {
-                caption = 'Гант';
+        workArea {
+            // вкладки — в рабочей области слева от колонки периода и фильтров
+            NEW planningTabs FIRST {
+                tabbed = TRUE;
                 fill = 1;
                 alignment = STRETCH;
-                // фильтры по заказам и по людям над диаграммой
-                NEW ganttFilters {
-                    horizontal = TRUE;
-                    alignment = STRETCH;
-                    MOVE PROPERTY(ganttResponsible);
-                    MOVE PROPERTY(ganttType) { select = 'dropdown'; }
-                    MOVE PROPERTY(ganttOrderSearch);
-                    MOVE PROPERTY(ganttShowDone);
-                    MOVE PROPERTY(ganttDepartment);
-                    MOVE PROPERTY(ganttPosition);
-                    MOVE PROPERTY(nameFilterEmployee());
-                }
-                MOVE GRID(g) {
+                MOVE body { caption = 'Доска'; }
+                NEW ganttPane {
+                    caption = 'Гант';
                     fill = 1;
-                    width = 400;
-                    height = 400;
+                    alignment = STRETCH;
+                    MOVE GRID(g) {
+                        fill = 1;
+                        width = 400;
+                        height = 400;
+                    }
                 }
             }
         }
         REMOVE BOX(g);
+        // фильтр по сотруднику действует только на Ганте
+        peopleFilters {
+            MOVE PROPERTY(nameFilterEmployee()) { caption = 'Сотрудник (на Ганте)'; captionVertical = TRUE; alignment = STRETCH; }
+        }
     }
 }
 

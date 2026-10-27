@@ -1,0 +1,137 @@
+MODULE WorkAbsence;
+
+REQUIRE WorkPlanning;
+
+NAMESPACE Manufacturing;
+
+// Недоступность сотрудника для распределения (болеет, отпросился и т. п.) с даты по дату, пусто — до возвращения.
+// Отмечается на доске броском в колонку «Недоступные»: распределения на это время снимаются,
+// продолжающиеся после него возобновляются со следующего дня. Табель не меняется.
+CLASS AbsenceReason 'Причина недоступности' {
+    sick 'Болеет',
+    leave 'Отпросился',
+    vacation 'Отпуск',
+    other 'Другое'
+}
+
+CLASS WorkAbsence 'Недоступность';
+TABLE workAbsence (WorkAbsence);
+
+employee = DATA Employee (WorkAbsence) NONULL TABLE workAbsence INDEXED;
+nameEmployee 'Сотрудник' (WorkAbsence w) = name(employee(w)) IN id;
+reason = DATA AbsenceReason (WorkAbsence) TABLE workAbsence;
+captionReason 'Причина' (WorkAbsence w) = caption(reason(w)) IN base;
+fromDate 'Дата с' = DATA DATE (WorkAbsence) NONULL TABLE workAbsence IN base;
+toDate 'Дата по' = DATA DATE (WorkAbsence) TABLE workAbsence IN base;
+
+CONSTRAINT toDate(WorkAbsence w) < fromDate(w)
+    MESSAGE 'Дата по в недоступности не может быть раньше даты с';
+
+overlaps (WorkAbsence w, DATE from, DATE to) = fromDate(w) <= to AND NOT toDate(w) < from;
+// недоступность сотрудника в день d (последняя начатая, если их несколько)
+absence (Employee e, DATE d) = GROUP LAST WorkAbsence w ORDER fromDate(w), w WHERE employee(w) = e AND overlaps(w, d, d);
+absent (Employee e, DATE d) = TRUE IF absence(e, d);
+
+// отметка недоступности: распределения с from снимаются, а те, что продолжаются после to, начинаются с to + 1
+markAbsent (Employee e, AbsenceReason r, DATE from, DATE to) {
+    IF NOT (e IS Employee AND from) OR to < from THEN RETURN;
+    NEWSESSION {
+        NEW w = WorkAbsence {
+            employee(w) <- e;
+            reason(w) <- r;
+            fromDate(w) <- from;
+            toDate(w) <- to;
+        }
+        FOR employee(WorkAllocation a) = e AND NOT toDate(a) < from AND (NOT to OR fromDate(a) <= to) ORDER a DO {
+            cut(a, from);
+            IF to AND (NOT toDate(cutResult()) OR toDate(cutResult()) > to) THEN
+                fromDate(cutResult()) <- sum(to, 1);
+            ELSE
+                DELETE cutResult();
+        }
+        APPLY;
+    }
+}
+
+// возвращение с даты from внутри текущей сессии: недоступность заканчивается днём раньше
+returnIn (WorkAbsence w, DATE from) {
+    IF fromDate(w) >= from THEN
+        DELETE w;
+    ELSE IF NOT toDate(w) < from THEN
+        toDate(w) <- sum(from, -1);
+}
+
+// обёртки для workboard.js: даты приходят строкой ГГГГ-ММ-ДД, пустая «по» — пустой строкой ('' не NULL)
+boardMarkAbsent (Employee e, AbsenceReason r, STRING from, STRING to) {
+    IF NOT (from AND NOT from = r'') THEN RETURN;
+    markAbsent(e, r, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD') IF to AND NOT to = r'');
+}
+boardReturnAbsent (WorkAbsence w, STRING from) {
+    IF NOT (w IS WorkAbsence AND from AND NOT from = r'') THEN RETURN;
+    NEWSESSION {
+        returnIn(w, toDateFormat(from, r'YYYY-MM-DD'));
+        APPLY;
+    }
+}
+// недоступный брошен на заказ: возвращается и ставится на него на свободные часы
+boardReturnToOrder (WorkAbsence w, ManufacturingOrder o, STRING from, STRING to) {
+    IF NOT (w IS WorkAbsence AND o IS ManufacturingOrder AND from AND NOT from = r'' AND to) THEN RETURN;
+    NEWSESSION {
+        LOCAL e = Employee ();
+        e() <- employee(w);
+        returnIn(w, toDateFormat(from, r'YYYY-MM-DD'));
+        allocateIn(e(), o, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+        IF allocateResult() THEN mergeIn(allocateResult());
+        APPLY;
+    }
+}
+// карточка недоступности: исправление причины и дат (распределения не пересчитываются)
+boardSaveAbsence (WorkAbsence w, AbsenceReason r, STRING from, STRING to) {
+    IF NOT (w IS WorkAbsence AND from AND NOT from = r'') THEN RETURN;
+    NEWSESSION {
+        reason(w) <- r;
+        fromDate(w) <- toDateFormat(from, r'YYYY-MM-DD');
+        toDate(w) <- toDateFormat(to, r'YYYY-MM-DD') IF to AND NOT to = r'';
+        APPLY;
+    }
+}
+
+// причины для окна отметки — несколько статических объектов
+absenceReasons () = JSON FROM id = AbsenceReason r, caption = caption(r) WHERE r IS AbsenceReason ORDER r;
+
+EXTEND FORM workPlanning
+    OBJECTS ab = WorkAbsence CUSTOM 'workBoardAbsent'
+                OPTIONS JSON FROM from = periodFrom(), to = periodTo(), actionDate = actionDate(),
+                                  reasons = absenceReasons(), i18n = workBoardI18n()
+                PAGESIZE 0
+    PROPERTIES(ab) READONLY abName = nameEmployee, abReason = captionReason, abReasonId = reason,
+                            abFrom = fromDate, abTo = toDate, abEmployee = employee
+    PROPERTIES READONLY abPosition = namePosition(employee(ab)), abid = (LONG(ab))
+    ORDERS abName
+    FILTERS overlaps(ab, periodFrom(), periodTo()), inPool(b, employee(ab))
+
+    // недоступные в день действия доски не показываются в «Свободных»
+    FILTERS NOT absent(e, actionDate())
+
+    CUSTOMS boardMarkAbsent[Employee, AbsenceReason, STRING, STRING],
+            boardReturnAbsent[WorkAbsence, STRING],
+            boardReturnToOrder[WorkAbsence, ManufacturingOrder, STRING, STRING],
+            boardSaveAbsence[WorkAbsence, AbsenceReason, STRING, STRING]
+;
+
+DESIGN workPlanning {
+    body {
+        // «Недоступные» — узкая колонка слева от «Свободных»: свободные люди остаются рядом с доской
+        NEW absentPane BEFORE freePane {
+            width = 180;
+            flex = 0;
+            alignment = STRETCH;
+            MOVE GRID(ab) {
+                fill = 1;
+                alignment = STRETCH;
+                height = 300;
+            }
+        }
+    }
+    REMOVE BOX(ab);
+}

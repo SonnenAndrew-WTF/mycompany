@@ -1,6 +1,6 @@
 MODULE WorkAllocation;
 
-REQUIRE WorkBoard, Time;
+REQUIRE WorkBoard, WorkTeam, Time;
 
 NAMESPACE Manufacturing;
 
@@ -21,6 +21,11 @@ fromDate 'Дата с' = DATA DATE (WorkAllocation) NONULL TABLE workAllocation 
 toDate 'Дата по' = DATA DATE (WorkAllocation) TABLE workAllocation IN base;
 hours 'Часов в день' = DATA NUMERIC[5,2] (WorkAllocation) TABLE workAllocation IN base;
 parent = DATA WorkAllocation (WorkAllocation) TABLE workAllocation;
+// примечание к назначению: что именно человек делает на заказе («на полировку швов»)
+note 'Примечание' = DATA STRING[200] (WorkAllocation) TABLE workAllocation IN base CHARWIDTH 30;
+// звено, в составе которого сотрудник работает на заказе (пусто — сам по себе)
+team = DATA WorkTeam (WorkAllocation) TABLE workAllocation INDEXED;
+nameTeam 'Звено' (WorkAllocation a) = name(team(a));
 
 CONSTRAINT toDate(WorkAllocation a) < fromDate(a)
     MESSAGE 'Дата по в распределении не может быть раньше даты с';
@@ -51,6 +56,8 @@ cut (WorkAllocation a, DATE d) {
             order(n) <- order(a);
             hours(n) <- hours(a);
             parent(n) <- parent(a);
+            team(n) <- team(a);
+            note(n) <- note(a);
             fromDate(n) <- d;
             toDate(n) <- toDate(a);
             parent(WorkAllocation c) <- n WHERE parent(c) = a AND NOT toDate(c) < d;
@@ -61,37 +68,76 @@ cut (WorkAllocation a, DATE d) {
         cutResult() <- a;
 }
 
+// Плашка n сливается с плашкой того же сотрудника на том же заказе (в том же звене или обе без звена),
+// которая действует в день её начала и заканчивается тогда же: часы складываются, n удаляется.
+// Так отделённые и переведённые части дня не дробятся на заказе на несколько плашек.
+mergeIn (WorkAllocation n) {
+    FOR WorkAllocation x = (GROUP MIN WorkAllocation y IF NOT y = n AND employee(y) = employee(n) AND order(y) = order(n)
+            AND (team(y) = team(n) OR NOT (team(y) OR team(n)))
+            AND overlaps(y, fromDate(n), fromDate(n))
+            AND (toDate(y) = toDate(n) OR NOT (toDate(y) OR toDate(n)))) DO {
+        cut(x, fromDate(n));
+        hours(cutResult()) <- NUMERIC[5,2](dayHours(cutResult()) + dayHours(n)) IF dayHours(cutResult()) + dayHours(n) < workDayHours();
+        parent(WorkAllocation c) <- cutResult() WHERE parent(c) = n;
+        IF parent(cutResult()) = n THEN parent(cutResult()) <- parent(n);
+        IF NOT note(cutResult()) THEN note(cutResult()) <- note(n);
+        DELETE n;
+    }
+}
+
 // Действия доски. Вызываются из workboard.js (CUSTOMS формы), поэтому проверяют аргументы сами.
+
+// сотрудник ставится на заказ на свободные часы внутри текущей сессии; свободных нет — ничего.
+// Результат — новое распределение.
+allocateResult = DATA LOCAL WorkAllocation ();
+
+allocateIn (Employee e, ManufacturingOrder o, DATE from, DATE to) {
+    allocateResult() <- NULL;
+    LOCAL free = NUMERIC[5,2] ();
+    LOCAL main = WorkAllocation ();
+    free() <- freeHours(e, from, to);
+    IF NOT free() > 0 THEN RETURN;
+    // основное распределение ищется до создания новой плашки, иначе она найдёт саму себя
+    main() <- root(e, from, to);
+    NEW n = WorkAllocation {
+        employee(n) <- e;
+        order(n) <- o;
+        fromDate(n) <- from;
+        // до планового завершения заказа; не указано (или уже прошло) — «до перевода»
+        toDate(n) <- planeDateTime(o) IF planeDateTime(o) >= from;
+        hours(n) <- free() IF free() < workDayHours();
+        parent(n) <- main();
+        allocateResult() <- n;
+    }
+}
 
 // сотрудник из «Свободных» ставится на заказ на свободные часы
 allocate (Employee e, ManufacturingOrder o, DATE from, DATE to) {
     IF NOT (e IS Employee AND o IS ManufacturingOrder AND from <= to) THEN RETURN;
     NEWSESSION {
-        LOCAL free = NUMERIC[5,2] ();
-        LOCAL main = WorkAllocation ();
-        free() <- freeHours(e, from, to);
-        IF NOT free() > 0 THEN RETURN;
-        // основное распределение ищется до создания новой плашки, иначе она найдёт саму себя
-        main() <- root(e, from, to);
-        NEW n = WorkAllocation {
-            employee(n) <- e;
-            order(n) <- o;
-            fromDate(n) <- from;
-            // до планового завершения заказа; не указано (или уже прошло) — «до перевода»
-            toDate(n) <- planeDateTime(o) IF planeDateTime(o) >= from;
-            hours(n) <- free() IF free() < workDayHours();
-            parent(n) <- main();
+        allocateIn(e, o, from, to);
+        IF allocateResult() THEN {
+            mergeIn(allocateResult());
+            APPLY;
         }
-        APPLY;
     }
 }
 
-// перевод плашки на другой заказ с даты from
+// перевод на другой заказ с даты from внутри текущей сессии; звено распределения сохраняется,
+// примечание относилось к прежнему заказу и снимается
+moveIn (WorkAllocation a, ManufacturingOrder o, DATE from) {
+    cut(a, from);
+    order(cutResult()) <- o;
+    note(cutResult()) <- NULL;
+}
+
+// перевод плашки на другой заказ с даты from: человек уходит один, без звена
 move (WorkAllocation a, ManufacturingOrder o, DATE from) {
     IF NOT (a IS WorkAllocation AND o IS ManufacturingOrder AND from) OR order(a) = o THEN RETURN;
     NEWSESSION {
-        cut(a, from);
-        order(cutResult()) <- o;
+        moveIn(a, o, from);
+        team(cutResult()) <- NULL;
+        mergeIn(cutResult());
         APPLY;
     }
 }
@@ -108,14 +154,15 @@ release (WorkAllocation a, DATE from) {
     }
 }
 
-// Ctrl + перетаскивание: от плашки отделяется h часов на заказ o, остаток остаётся на месте
-split (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
-    IF NOT (a IS WorkAllocation AND o IS ManufacturingOrder AND h > 0 AND from) OR order(a) = o THEN RETURN;
+// от распределения отделяется h часов в день на заказ o с даты from внутри текущей сессии,
+// остаток остаётся на месте; h не меньше дня — перевод целиком. Результат — отделённая часть.
+splitResult = DATA LOCAL WorkAllocation ();
+
+splitIn (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
     IF h >= dayHours(a) THEN {
-        move(a, o, from);
-        RETURN;
-    }
-    NEWSESSION {
+        moveIn(a, o, from);
+        splitResult() <- cutResult();
+    } ELSE {
         cut(a, from);
         NEW n = WorkAllocation {
             employee(n) <- employee(cutResult());
@@ -124,15 +171,27 @@ split (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
             toDate(n) <- toDate(cutResult());
             hours(n) <- h;
             parent(n) <- OVERRIDE parent(cutResult()), cutResult();
+            team(n) <- team(cutResult());
+            splitResult() <- n;
         }
         hours(cutResult()) <- NUMERIC[5,2](dayHours(cutResult()) - h);
+    }
+}
+
+// Ctrl + перетаскивание: от плашки отделяется h часов на заказ o, отделённая часть — без звена
+split (WorkAllocation a, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
+    IF NOT (a IS WorkAllocation AND o IS ManufacturingOrder AND h > 0 AND from) OR order(a) = o THEN RETURN;
+    NEWSESSION {
+        splitIn(a, o, h, from);
+        team(splitResult()) <- NULL;
+        mergeIn(splitResult());
         APPLY;
     }
 }
 
 FORM workAllocation 'Распределение'
     OBJECTS a = WorkAllocation PANEL
-    PROPERTIES(a) nameEmployee, numberOrder, fromDate, toDate, hours
+    PROPERTIES(a) nameEmployee, numberOrder, nameTeam, fromDate, toDate, hours, note
 
     EDIT WorkAllocation OBJECT a
 ;
@@ -142,9 +201,11 @@ DESIGN workAllocation {
         NEW fields FIRST {
             MOVE PROPERTY(nameEmployee(a));
             MOVE PROPERTY(numberOrder(a));
+            MOVE PROPERTY(nameTeam(a));
             MOVE PROPERTY(fromDate(a));
             MOVE PROPERTY(toDate(a));
             MOVE PROPERTY(hours(a));
+            MOVE PROPERTY(note(a));
         }
     }
 }

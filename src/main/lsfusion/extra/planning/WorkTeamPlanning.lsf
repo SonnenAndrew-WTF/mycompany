@@ -1,0 +1,184 @@
+MODULE WorkTeamPlanning;
+
+REQUIRE WorkAbsence;
+
+NAMESPACE Manufacturing;
+
+// Звенья на доске распределения: звено ставится на заказ одной плашкой, переводится и снимается целиком,
+// с Ctrl делится по часам, как обычная плашка. Члены звена — обычные распределения с указанным звеном,
+// поэтому Гант и свободные часы их считают как всех.
+
+// плашка звена на заказе — его распределения на этом заказе, действующие с даты from по to
+inTeam (WorkAllocation a, WorkTeam t, ManufacturingOrder o, DATE from, DATE to) = team(a) = t AND order(a) = o AND overlaps(a, from, to);
+
+// звено ставится на заказ: каждый его член из пула доски — на свои свободные часы
+allocateTeam (WorkTeam t, ManufacturingOrder o, DATE from, DATE to) {
+    IF NOT (t IS WorkTeam AND o IS ManufacturingOrder AND from <= to) THEN RETURN;
+    NEWSESSION {
+        FOR team(Employee e) = t AND inPool(board(o), e) AND NOT absent(e, from) ORDER e DO {
+            allocateIn(e, o, from, to);
+            IF allocateResult() THEN {
+                team(allocateResult()) <- t;
+                mergeIn(allocateResult());
+            }
+        }
+        APPLY;
+    }
+}
+
+// перевод плашки звена с заказа oa на заказ o с даты from
+moveTeam (WorkTeam t, ManufacturingOrder oa, ManufacturingOrder o, DATE from, DATE to) {
+    IF NOT (t IS WorkTeam AND oa IS ManufacturingOrder AND o IS ManufacturingOrder AND from <= to) OR oa = o THEN RETURN;
+    NEWSESSION {
+        FOR inTeam(WorkAllocation a, t, oa, from, to) ORDER a DO {
+            moveIn(a, o, from);
+            mergeIn(cutResult());
+        }
+        APPLY;
+    }
+}
+
+// Ctrl: от каждого члена звена отделяется h часов в день на заказ o, на нём появляется плашка того же звена
+splitTeam (WorkTeam t, ManufacturingOrder oa, ManufacturingOrder o, NUMERIC[5,2] h, DATE from, DATE to) {
+    IF NOT (t IS WorkTeam AND oa IS ManufacturingOrder AND o IS ManufacturingOrder AND h > 0 AND from <= to) OR oa = o THEN RETURN;
+    NEWSESSION {
+        FOR inTeam(WorkAllocation a, t, oa, from, to) ORDER a DO {
+            splitIn(a, o, h, from);
+            mergeIn(splitResult());
+        }
+        APPLY;
+    }
+}
+
+// снятие звена с заказа с даты from: как у одной плашки — запланированное удаляется, начатое закрывается
+releaseTeam (WorkTeam t, ManufacturingOrder oa, DATE from, DATE to) {
+    IF NOT (t IS WorkTeam AND oa IS ManufacturingOrder AND from <= to) THEN RETURN;
+    NEWSESSION {
+        DELETE WorkAllocation a WHERE inTeam(a, t, oa, from, to) AND fromDate(a) >= from;
+        toDate(WorkAllocation a) <- sum(from, -1) WHERE inTeam(a, t, oa, from, to);
+        APPLY;
+    }
+}
+
+// плашка брошена на плашку звена: человек работает на заказе o в этом звене (справочник не меняется);
+// h — отделить только часть дня, пусто — целиком
+joinTeam (WorkAllocation a, WorkTeam t, ManufacturingOrder o, NUMERIC[5,2] h, DATE from) {
+    IF NOT (a IS WorkAllocation AND t IS WorkTeam AND o IS ManufacturingOrder AND from) OR (team(a) = t AND order(a) = o) THEN RETURN;
+    NEWSESSION {
+        IF order(a) = o THEN {
+            cut(a, from);
+            team(cutResult()) <- t;
+            mergeIn(cutResult());
+        } ELSE IF h > 0 THEN {
+            splitIn(a, o, h, from);
+            team(splitResult()) <- t;
+            mergeIn(splitResult());
+        } ELSE {
+            moveIn(a, o, from);
+            team(cutResult()) <- t;
+            mergeIn(cutResult());
+        }
+        APPLY;
+    }
+}
+
+// человек выводится из звена на этом заказе с даты from и остаётся на нём отдельной плашкой
+leaveTeam (WorkAllocation a, DATE from) {
+    IF NOT (a IS WorkAllocation AND team(a) AND from) OR toDate(a) < from THEN RETURN;
+    NEWSESSION {
+        cut(a, from);
+        team(cutResult()) <- NULL;
+        mergeIn(cutResult());
+        APPLY;
+    }
+}
+
+// «Собрать звено» на заказе: отмеченные на доске люди без звена становятся новым звеном справочника
+teamMark 'Отметка для звена' = DATA LOCAL BOOLEAN (WorkAllocation);
+
+formTeam (ManufacturingOrder o, ISTRING[50] n, WorkAllocation fa, DATE from) {
+    IF NOT (o IS ManufacturingOrder AND n AND from) THEN RETURN;
+    NEWSESSION NESTED (teamMark) {
+        IF NOT (GROUP SUM 1 IF teamMark(WorkAllocation a) AND order(a) = o AND NOT team(a)) THEN RETURN;
+        NEW t = WorkTeam {
+            name(t) <- n;
+            team(Employee e) <- t WHERE (GROUP SUM 1 IF teamMark(WorkAllocation a) AND order(a) = o AND NOT team(a) AND employee(a) = e);
+            foreman(t) <- employee(fa) IF teamMark(fa) AND order(fa) = o;
+            FOR teamMark(WorkAllocation a) AND order(a) = o AND NOT team(a) AND NOT toDate(a) < from ORDER a DO {
+                cut(a, from);
+                team(cutResult()) <- t;
+            }
+        }
+        APPLY;
+    }
+    teamMark(WorkAllocation a) <- NULL;
+}
+
+// звенья в «Свободных»: сколько их членов из пула доски ещё не распределено полностью
+freeMembers 'Свободных' (WorkTeam t, WorkBoard b) = GROUP SUM 1 IF team(Employee e) = t AND inPool(b, e) AND boardFreeHours(e) > 0
+    AND NOT absent(e, actionDate());
+freeMemberNames (WorkTeam t, WorkBoard b) = GROUP CONCAT name(Employee e) IF team(e) = t AND inPool(b, e) AND boardFreeHours(e) > 0
+    AND NOT absent(e, actionDate()), ', ' ORDER name(e), e;
+
+isForeman (WorkAllocation a) = foreman(team(a)) = employee(a);
+// людей в плашке звена на доске за период
+teamCount (WorkAllocation a) = GROUP SUM 1 IF inTeam(WorkAllocation x, team(a), order(a), periodFrom(), periodTo());
+
+// обёртки для workboard.js: даты приходят строкой ГГГГ-ММ-ДД
+boardAllocateTeam (WorkTeam t, ManufacturingOrder o, STRING from, STRING to) {
+    allocateTeam(t, o, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+}
+boardMoveTeam (WorkTeam t, ManufacturingOrder oa, ManufacturingOrder o, STRING from, STRING to) {
+    moveTeam(t, oa, o, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+}
+boardSplitTeam (WorkTeam t, ManufacturingOrder oa, ManufacturingOrder o, NUMERIC[5,2] h, STRING from, STRING to) {
+    splitTeam(t, oa, o, h, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+}
+boardReleaseTeam (WorkTeam t, ManufacturingOrder oa, STRING from, STRING to) {
+    releaseTeam(t, oa, toDateFormat(from, r'YYYY-MM-DD'), toDateFormat(to, r'YYYY-MM-DD'));
+}
+boardJoinTeam (WorkAllocation a, WorkTeam t, ManufacturingOrder o, NUMERIC[5,2] h, STRING from) {
+    joinTeam(a, t, o, h, toDateFormat(from, r'YYYY-MM-DD'));
+}
+boardLeaveTeam (WorkAllocation a, STRING from) {
+    leaveTeam(a, toDateFormat(from, r'YYYY-MM-DD'));
+}
+boardFormTeam (ManufacturingOrder o, STRING n, WorkAllocation fa, STRING from) {
+    // пустое наименование приходит пустой строкой; '' не NULL, проверяем явно
+    IF n AND NOT trim(n) = r'' THEN
+        formTeam(o, ISTRING[50](trim(n)), fa, toDateFormat(from, r'YYYY-MM-DD'));
+}
+
+EXTEND FORM workPlanning
+    OBJECTS tm = WorkTeam CUSTOM 'workBoardTeams'
+                OPTIONS JSON FROM from = periodFrom(), to = periodTo(), actionDate = actionDate(), i18n = workBoardI18n()
+                PAGESIZE 0
+    PROPERTIES(tm) READONLY tmName = name, tmForeman = nameForeman
+    PROPERTIES READONLY tmFree = freeMembers(tm, b), tmMembers = freeMemberNames(tm, b), tid = (LONG(tm))
+    ORDERS tmName
+    FILTERS NOT archived(tm), freeMembers(tm, b)
+
+    // звено плашки: по нему workboard.js собирает плашки звена в одну
+    PROPERTIES(a) READONLY team, nameTeam, foreman = isForeman, teamCount
+    PROPERTIES(a) teamMark
+
+    CUSTOMS boardAllocateTeam[WorkTeam, ManufacturingOrder, STRING, STRING],
+            boardMoveTeam[WorkTeam, ManufacturingOrder, ManufacturingOrder, STRING, STRING],
+            boardSplitTeam[WorkTeam, ManufacturingOrder, ManufacturingOrder, NUMERIC[5,2], STRING, STRING],
+            boardReleaseTeam[WorkTeam, ManufacturingOrder, STRING, STRING],
+            boardJoinTeam[WorkAllocation, WorkTeam, ManufacturingOrder, NUMERIC[5,2], STRING],
+            boardLeaveTeam[WorkAllocation, STRING],
+            boardFormTeam[ManufacturingOrder, STRING, WorkAllocation, STRING]
+;
+
+DESIGN workPlanning {
+    freePane {
+        // звенья — над списком свободных людей, блоки одной высоты
+        MOVE GRID(tm) BEFORE GRID(e) {
+            fill = 1;
+            alignment = STRETCH;
+            height = 300;
+        }
+    }
+    REMOVE BOX(tm);
+}
