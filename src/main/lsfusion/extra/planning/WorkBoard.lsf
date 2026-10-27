@@ -18,8 +18,6 @@ TABLE workBoardType (WorkBoard, ManufacturingOrderType);
 in 'Вкл.' = DATA BOOLEAN (WorkBoard, ManufacturingOrderType) TABLE workBoardType;
 types 'Типы заказов' (WorkBoard b) = GROUP CONCAT name(ManufacturingOrderType t) IF in(b, t), ', ' ORDER name(t), t CHARWIDTH 30;
 
-defaultBoard (ManufacturingOrderType t) = GROUP LAST WorkBoard b ORDER DESC index(b), b WHERE in(b, t);
-
 // подразделения, из которых берутся люди; ни одного не указано — все сотрудники
 TABLE workBoardDepartment (WorkBoard, Department);
 in 'Вкл.' = DATA BOOLEAN (WorkBoard, Department) TABLE workBoardDepartment;
@@ -37,10 +35,8 @@ countEmployees (Position p) = GROUP SUM 1 IF position(Employee e) = p AND e IS E
 inPool (WorkBoard b, Employee e) = active(e) AND b IS WorkBoard AND (NOT countDepartments(b) OR in(b, department(e)))
     AND NOT excluded(b, position(e));
 
-// доска заказа: по типу, можно переопределить вручную
-dataBoard = DATA WorkBoard (ManufacturingOrder);
-board (ManufacturingOrder o) = OVERRIDE dataBoard(o), defaultBoard(type(o));
-nameBoard 'Доска распределения' (ManufacturingOrder o) = name(board(o));
+// заказ виден на всех досках, где отмечен его тип
+onBoard (ManufacturingOrder o, WorkBoard b) = in(b, type(o));
 
 namePartner 'Контрагент' (ManufacturingOrder o) = name(partner(project(o)));
 
@@ -109,16 +105,6 @@ EXTEND FORM options
 DESIGN options {
     commons {
         MOVE PROPERTY(dataWorkDayHours());
-    }
-}
-
-EXTEND FORM manufacturingOrder
-    PROPERTIES(o) READONLYIF readonly(o) nameBoard
-;
-
-DESIGN manufacturingOrder {
-    headerLeft {
-        MOVE PROPERTY(nameBoard(o)) AFTER PROPERTY(nameType(o));
     }
 }
 

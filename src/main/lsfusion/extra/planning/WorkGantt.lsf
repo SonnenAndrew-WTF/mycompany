@@ -89,7 +89,7 @@ EXTEND FORM workPlanning
                            gChild = ganttChild, gSplit = ganttSplit
     PROPERTIES READONLY gid = (LONG(g))
     ORDERS gPosition, gName, gFrom, gid
-    FILTERS board(order(g)) = b, overlaps(g, periodFrom(), ganttTo()), shown(order(g), b, periodFrom(), ganttTo()),
+    FILTERS overlaps(g, periodFrom(), ganttTo()), shown(order(g), b, periodFrom(), ganttTo()),
             NOT filterDepartment() OR department(employee(g)) = filterDepartment(),
             NOT filterPosition() OR position(employee(g)) = filterPosition(),
             NOT filterEmployee() OR employee(g) = filterEmployee()

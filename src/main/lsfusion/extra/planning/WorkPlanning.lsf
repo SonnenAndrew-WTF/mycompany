@@ -139,7 +139,7 @@ countAllocations (ManufacturingOrder o, DATE from, DATE to) = GROUP SUM 1 IF ord
 // выполненные — за последние 60 дней; заказ, на котором в периоде стоят люди, виден всегда, чтобы они
 // не «потерялись», — кроме фильтров по статусу, типу и поиска по номеру; при поиске ограничения по датам
 // не действуют: находятся все заказы доски с таким номером
-shown (ManufacturingOrder o, WorkBoard b, DATE from, DATE to) = board(o) = b AND
+shown (ManufacturingOrder o, WorkBoard b, DATE from, DATE to) = onBoard(o, b) AND
     (IF filterStatus() THEN status(o) = filterStatus() ELSE NOT canceled(o)) AND
     (NOT filterType() OR type(o) = filterType()) AND
     (NOT orderSearch() OR ISTRING[50](number(o)) LIKE r'%' + orderSearch() + r'%') AND
@@ -292,7 +292,7 @@ FORM workPlanning 'Доски распределения' IMAGE 'bi bi-kanban'
                            child = childInPeriod, split = splitInPeriod, familyOrder, childOrder, note
     PROPERTIES READONLY aid = (LONG(a))
     ORDERS namePosition(a), nameEmployee(a), familyOrder(a), childOrder(a), aid
-    FILTERS board(order(a)) = b, overlaps(a, periodFrom(), periodTo()), shown(order(a), b)
+    FILTERS overlaps(a, periodFrom(), periodTo()), shown(order(a), b)
 
     CUSTOMS boardAllocate[Employee, ManufacturingOrder, STRING, STRING],
             boardMove[WorkAllocation, ManufacturingOrder, STRING],
