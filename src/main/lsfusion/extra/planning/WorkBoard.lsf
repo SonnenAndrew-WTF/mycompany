@@ -35,10 +35,8 @@ countEmployees (Position p) = GROUP SUM 1 IF position(Employee e) = p AND e IS E
 inPool (WorkBoard b, Employee e) = active(e) AND b IS WorkBoard AND (NOT countDepartments(b) OR in(b, department(e)))
     AND NOT excluded(b, position(e));
 
-// заказ виден на всех досках, где отмечен его тип; доска, выбранная в карточке заказа, оставляет его только на ней
-dataBoard = DATA WorkBoard (ManufacturingOrder);
-nameDataBoard 'Доска распределения' (ManufacturingOrder o) = name(dataBoard(o));
-onBoard (ManufacturingOrder o, WorkBoard b) = IF dataBoard(o) THEN dataBoard(o) = b ELSE in(b, type(o));
+// заказ виден на всех досках, где отмечен его тип
+onBoard (ManufacturingOrder o, WorkBoard b) = in(b, type(o));
 
 namePartner 'Контрагент' (ManufacturingOrder o) = name(partner(project(o)));
 
@@ -107,17 +105,6 @@ EXTEND FORM options
 DESIGN options {
     commons {
         MOVE PROPERTY(dataWorkDayHours());
-    }
-}
-
-EXTEND FORM manufacturingOrder
-    PROPERTIES(o) READONLYIF readonly(o) nameDataBoard
-;
-
-DESIGN manufacturingOrder {
-    headerLeft {
-        // пусто — заказ на всех досках своего типа
-        MOVE PROPERTY(nameDataBoard(o)) AFTER PROPERTY(nameType(o)) { placeholder = 'Все доски своего типа'; }
     }
 }
 
