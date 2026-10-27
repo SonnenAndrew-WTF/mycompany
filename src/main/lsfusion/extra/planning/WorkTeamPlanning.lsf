@@ -11,11 +11,11 @@ NAMESPACE Manufacturing;
 // плашка звена на заказе — его распределения на этом заказе, действующие с даты from по to
 inTeam (WorkAllocation a, WorkTeam t, ManufacturingOrder o, DATE from, DATE to) = team(a) = t AND order(a) = o AND overlaps(a, from, to);
 
-// звено ставится на заказ: каждый его член из пула доски — на свои свободные часы
+// звено ставится на заказ: каждый его член из пула какой-нибудь доски этого заказа — на свои свободные часы
 allocateTeam (WorkTeam t, ManufacturingOrder o, DATE from, DATE to) {
     IF NOT (t IS WorkTeam AND o IS ManufacturingOrder AND from <= to) THEN RETURN;
     NEWSESSION {
-        FOR team(Employee e) = t AND inPool(board(o), e) AND NOT absent(e, from) ORDER e DO {
+        FOR team(Employee e) = t AND (GROUP SUM 1 IF onBoard(o, WorkBoard b) AND inPool(b, e)) AND NOT absent(e, from) ORDER e DO {
             allocateIn(e, o, from, to);
             IF allocateResult() THEN {
                 team(allocateResult()) <- t;
