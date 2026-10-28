@@ -1,0 +1,81 @@
+MODULE LeadCalculationVerticalTankLabor;
+
+REQUIRE LeadCalculationVerticalTank, LeadCalculationLabor;
+
+NAMESPACE LeadCalculation;
+
+// Работы по ёмкости: список работ шаблона. Работы рубашки, изоляции и облицовки
+// показываются и считаются, только если узел включён в расчёте материалов.
+
+CLASS TankOperation 'Работа по ёмкости' {
+    topCone 'Верхний конус',
+    bottomCone 'Нижний конус',
+    legs 'Ноги: изготовление',
+    jacketConeMake 'Рубашка нижнего конуса: изготовление',
+    jacketShellMake 'Рубашка колбы: изготовление',
+    jacketConeWeld 'Приварка рубашки на конус',
+    insulationBottom 'Утепление нижнего конуса',
+    cladBottom 'Облицовка нижнего конуса',
+    assembly 'Сборка и обварка колбы и конусов',
+    jacketShellWeld 'Приварка рубашки колбы',
+    insulationShell 'Утепление колбы',
+    cladShell 'Облицовка колбы',
+    topSaber 'Приварка верхней сабли',
+    shellHatch 'Врезка люка колбы',
+    topHatch 'Врезка люка верхнего конуса',
+    insulationTop 'Изоляция верхнего конуса',
+    cladTop 'Облицовка верхнего конуса',
+    otherInserts 'Прочие врезки',
+    polishing 'Полировка',
+    shipping 'Подготовка к отправке',
+    reserve 'Запас'
+}
+
+index (TankOperation o) = CASE
+    WHEN o = TankOperation.topCone THEN 1
+    WHEN o = TankOperation.bottomCone THEN 2
+    WHEN o = TankOperation.legs THEN 3
+    WHEN o = TankOperation.jacketConeMake THEN 4
+    WHEN o = TankOperation.jacketShellMake THEN 5
+    WHEN o = TankOperation.jacketConeWeld THEN 6
+    WHEN o = TankOperation.insulationBottom THEN 7
+    WHEN o = TankOperation.cladBottom THEN 8
+    WHEN o = TankOperation.assembly THEN 9
+    WHEN o = TankOperation.jacketShellWeld THEN 10
+    WHEN o = TankOperation.insulationShell THEN 11
+    WHEN o = TankOperation.cladShell THEN 12
+    WHEN o = TankOperation.topSaber THEN 13
+    WHEN o = TankOperation.shellHatch THEN 14
+    WHEN o = TankOperation.topHatch THEN 15
+    WHEN o = TankOperation.insulationTop THEN 16
+    WHEN o = TankOperation.cladTop THEN 17
+    WHEN o = TankOperation.otherInserts THEN 18
+    WHEN o = TankOperation.polishing THEN 19
+    WHEN o = TankOperation.shipping THEN 20
+    WHEN o = TankOperation.reserve THEN 21;
+
+// работа узла считается, только если узел есть в ёмкости
+active (VerticalTankCalculation c, TankOperation o) = CASE
+    WHEN o = TankOperation.jacketConeMake OR o = TankOperation.jacketConeWeld THEN hasJacketCone(c)
+    WHEN o = TankOperation.jacketShellMake OR o = TankOperation.jacketShellWeld THEN hasJacketShell(c)
+    WHEN o = TankOperation.insulationTop THEN insulated(c, TankZone.top)
+    WHEN o = TankOperation.insulationShell THEN insulated(c, TankZone.shell)
+    WHEN o = TankOperation.insulationBottom THEN insulated(c, TankZone.bottom)
+    WHEN o = TankOperation.cladTop THEN clad(c, TankZone.top)
+    WHEN o = TankOperation.cladShell THEN clad(c, TankZone.shell)
+    WHEN o = TankOperation.cladBottom THEN clad(c, TankZone.bottom)
+    WHEN o IS TankOperation THEN c IS VerticalTankCalculation;
+
+// работа из списка шаблона; у работ, добавленных вручную, пусто
+tankOperation = DATA TankOperation (LeadCalculationOperation) TABLE leadCalculationOperation;
+
+hidden (LeadCalculationOperation o) += (NOT active(calculation(o), tankOperation(o))) IF tankOperation(o);
+
+fillOperations (LeadCalculation c) + {
+    FOR c IS VerticalTankCalculation AND TankOperation t IS TankOperation NEW o = LeadCalculationOperation DO {
+        calculation(o) <- c;
+        tankOperation(o) <- t;
+        index(o) <- index(t);
+        name(o) <- ISTRING[200](caption(t));
+    }
+}

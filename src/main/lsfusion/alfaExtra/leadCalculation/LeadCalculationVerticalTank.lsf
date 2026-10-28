@@ -1,0 +1,518 @@
+MODULE LeadCalculationVerticalTank;
+
+REQUIRE LeadCalculation, Utils, NumericUtils;
+
+NAMESPACE LeadCalculation;
+
+// Расчёт вертикальной цилиндрической ёмкости по шаблону
+// «ШАБЛОН_Материал+Работа+Заявка» (листы «Расчет МАТ+РАБ» и ADMIN).
+// Ёмкость: верхний конус + колба + нижний конус + ноги, по выбору — рубашка, изоляция, облицовка.
+// Размеры — в мм, плотность стали — 8. Выключенный узел не считается.
+// Здесь только расчёт; материалы — LeadCalculationVerticalTankMaterials, форма — LeadCalculationVerticalTankForm.
+
+CLASS VerticalTankCalculation 'Расчёт вертикальной цилиндрической ёмкости' : LeadCalculation;
+TABLE verticalTankCalculation (VerticalTankCalculation);
+
+typeName (VerticalTankCalculation c) += ISTRING[100]('Вертикальная цилиндрическая ёмкость') IF c IS VerticalTankCalculation;
+
+pi = FORMULA DOUBLE 'pi()';
+tanDegrees = FORMULA DOUBLE 'tan(radians($1))';
+sinDegrees = FORMULA DOUBLE 'sin(radians($1))';
+cosDegrees = FORMULA DOUBLE 'cos(radians($1))';
+
+// ---- списки
+CLASS TankShellFormat 'Формат металла' {
+    roll1500 'Рулон 1500',
+    sheet1500x3000 'Лист 1500х3000',
+    sheet1250x2500 'Лист 1250х2500'
+}
+
+width 'Ширина, мм' (TankShellFormat f) = CASE
+    WHEN f = TankShellFormat.roll1500 THEN 1500
+    WHEN f = TankShellFormat.sheet1500x3000 THEN 1500
+    WHEN f = TankShellFormat.sheet1250x2500 THEN 1250;
+length 'Длина листа, мм' (TankShellFormat f) = CASE
+    WHEN f = TankShellFormat.sheet1500x3000 THEN 3000
+    WHEN f = TankShellFormat.sheet1250x2500 THEN 2500;
+isRoll (TankShellFormat f) = f = TankShellFormat.roll1500;
+// размер в названии металла: «1500» у рулона, «1500х3000» у листа
+size (TankShellFormat f) = CASE
+    WHEN f = TankShellFormat.roll1500 THEN r'1500'
+    WHEN f = TankShellFormat.sheet1500x3000 THEN r'1500х3000'
+    WHEN f = TankShellFormat.sheet1250x2500 THEN r'1250х2500';
+
+CLASS TankSurface 'Поверхность металла' {
+    s2B '2B',
+    sBA 'BA',
+    s4N '4N (шлифованная)',
+    sNo1 'No.1'
+}
+code (TankSurface s) = CASE
+    WHEN s = TankSurface.s2B THEN r'2B'
+    WHEN s = TankSurface.sBA THEN r'BA'
+    WHEN s = TankSurface.s4N THEN r'4N'
+    WHEN s = TankSurface.sNo1 THEN r'No.1';
+
+CLASS TankLegType 'Диаметр трубы ноги' {
+    d108 '108',
+    d159 '159',
+    d219 '219',
+    d273 '273',
+    d323 '323',
+    d406 '406',
+    pyramidal 'Пирамидальная'
+}
+diameter (TankLegType t) = CASE
+    WHEN t = TankLegType.d108 THEN 108
+    WHEN t = TankLegType.d159 THEN 159
+    WHEN t = TankLegType.d219 THEN 219
+    WHEN t = TankLegType.d273 THEN 273
+    WHEN t = TankLegType.d323 THEN 323
+    WHEN t = TankLegType.d406 THEN 406;
+
+CLASS TankJacketType 'Тип рубашки' {
+    none 'Нет',
+    puklya 'Пукля',
+    strips 'Штрипс'
+}
+
+// Профиль штрипса — полоса трапециевидного сечения, навитая спиралью по колбе.
+// Ширина и высота — по наружному контуру, боковые стенки под 120° к основанию.
+CLASS TankStripProfile 'Профиль штрипса' {
+    p120x10x2 '120 × 10',
+    p100x10x25 '100 × 10',
+    p100x145x3 '100 × 14,5'
+}
+profileWidth 'Ширина, мм' (TankStripProfile p) = CASE
+    WHEN p = TankStripProfile.p120x10x2 THEN 120
+    WHEN p = TankStripProfile.p100x10x25 THEN 100
+    WHEN p = TankStripProfile.p100x145x3 THEN 100;
+profileHeight 'Высота, мм' (TankStripProfile p) = CASE
+    WHEN p = TankStripProfile.p120x10x2 THEN 10.0
+    WHEN p = TankStripProfile.p100x10x25 THEN 10.0
+    WHEN p = TankStripProfile.p100x145x3 THEN 14.5;
+profileThickness 'Толщина, мм' (TankStripProfile p) = NUMERIC[6,2](CASE
+    WHEN p = TankStripProfile.p120x10x2 THEN 2.0
+    WHEN p = TankStripProfile.p100x10x25 THEN 2.5
+    WHEN p = TankStripProfile.p100x145x3 THEN 3.0);
+profileRadius 'Радиус гиба, мм' (TankStripProfile p) = CASE
+    WHEN p = TankStripProfile.p120x10x2 THEN 2.56
+    WHEN p = TankStripProfile.p100x10x25 THEN 5.6
+    WHEN p = TankStripProfile.p100x145x3 THEN 5.6;
+// развёртка по средней линии: полка + две стенки, минус укорочение на двух гибах по 60°
+profileMidHeight (TankStripProfile p) = profileHeight(p) - profileThickness(p) / 2;
+developedWidth 'Развёртка штрипса, мм' (TankStripProfile p) = INTEGER(round(
+    profileWidth(p) - 2 * tanDegrees(30) * (profileThickness(p) + profileMidHeight(p))
+    + 2 * profileMidHeight(p) / sinDegrees(60)
+    - 2 * (profileRadius(p) + profileThickness(p) / 2) * (2 * tanDegrees(30) - pi() / 3), 0));
+
+CLASS TankInsulationType 'Тип изоляции' {
+    rubber 'Вспененный каучук',
+    mineralWool 'Минеральная вата'
+}
+
+// зоны ёмкости, на которые ставятся изоляция и облицовка
+CLASS TankZone 'Зона ёмкости' {
+    top 'Верхний конус',
+    shell 'Колба',
+    bottom 'Нижний конус'
+}
+
+TABLE verticalTankZone (VerticalTankCalculation, TankZone);
+
+// ---- общие параметры
+diameter 'Диаметр, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+height 'Высота колбы, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+floorHeight 'Высота от пола, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+workingPercent 'Рабочий объём, %' = DATA NUMERIC[5,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+steelGrade 'Марка стали' = DATA ISTRING[50] (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+surface = DATA TankSurface (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionSurface 'Поверхность' (VerticalTankCalculation c) = caption(surface(c));
+// конусы, рубашка и облицовка конусов кроятся из листа одного формата
+coneFormat = DATA TankShellFormat (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionConeFormat 'Лист для конусов' (VerticalTankCalculation c) = caption(coneFormat(c));
+CONSTRAINT isRoll(coneFormat(VerticalTankCalculation c)) CHECKED BY coneFormat[VerticalTankCalculation]
+    MESSAGE 'Конусы кроятся из листа: выберите листовой формат';
+
+shellFormat = DATA TankShellFormat (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionShellFormat 'Формат металла колбы' (VerticalTankCalculation c) = caption(shellFormat(c));
+shellThickness 'Толщина колбы, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+subtractScrap 'Вычесть обрезки колбы из стоимости' = DATA BOOLEAN (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// цены материалов (по умолчанию берутся из настроек при создании расчёта)
+steelPrice 'Цена стали корпуса, ₽/кг' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+legPipePrice 'Цена трубы на ноги, ₽/м' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+legPrice 'Цена опоры ноги, ₽/шт' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingPrice 'Цена расшивки ног, ₽/м' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+cladPrice 'Цена стали облицовки, ₽/кг' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+insulationPrice 'Цена изоляции, ₽/м²' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// ---- изоляция (лист ADMIN, блок AE)
+insulated 'Изоляция' = DATA BOOLEAN (VerticalTankCalculation, TankZone) TABLE verticalTankZone;
+insulationType = DATA TankInsulationType (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionInsulationType 'Тип изоляции' (VerticalTankCalculation c) = caption(insulationType(c));
+insulationThickness 'Толщина изоляции, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+insulationLayers 'Количество слоёв' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+hasInsulation (VerticalTankCalculation c) = GROUP SUM 1 IF insulated(c, TankZone z);
+// толщина изоляции под облицовкой этой зоны
+insulationUnder (VerticalTankCalculation c, TankZone z) = insulationThickness(c) IF insulated(c, z);
+
+// ---- облицовка (лист ADMIN, блоки AI, AL, AO)
+clad 'Облицовка' = DATA BOOLEAN (VerticalTankCalculation, TankZone) TABLE verticalTankZone;
+cladThickness 'Толщина облицовки, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+cladGrade 'Марка стали облицовки' = DATA ISTRING[50] (VerticalTankCalculation) TABLE verticalTankCalculation;
+cladSurface = DATA TankSurface (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionCladSurface 'Поверхность облицовки' (VerticalTankCalculation c) = caption(cladSurface(c));
+cladFormat = DATA TankShellFormat (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionCladFormat 'Формат металла облицовки колбы' (VerticalTankCalculation c) = caption(cladFormat(c));
+cladSubtractScrap 'Вычесть обрезки облицовки из стоимости' = DATA BOOLEAN (VerticalTankCalculation) TABLE verticalTankCalculation;
+hasClad (VerticalTankCalculation c) = GROUP SUM 1 IF clad(c, TankZone z);
+
+// ---- конусы: верхний, нижний и их облицовка — формулы одинаковые
+CLASS TankCone 'Конус' {
+    top 'Верхний конус',
+    bottom 'Нижний конус',
+    cladTop 'Облицовка верхнего конуса',
+    cladBottom 'Облицовка нижнего конуса'
+}
+
+TABLE verticalTankCone (VerticalTankCalculation, TankCone);
+
+// размеры задаются для верхнего и нижнего конуса, облицовка повторяет их форму
+thickness 'Толщина, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+angle 'Угол, °' = DATA NUMERIC[6,2] (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+apexDiameter 'Диаметр вершины, мм' = DATA INTEGER (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+
+isClad (TankCone k) = k = TankCone.cladTop OR k = TankCone.cladBottom;
+base (TankCone k) = CASE
+    WHEN k = TankCone.cladTop THEN TankCone.top
+    WHEN k = TankCone.cladBottom THEN TankCone.bottom
+    WHEN k IS TankCone THEN k;
+zone (TankCone k) = IF base(k) = TankCone.top THEN TankZone.top ELSE TankZone.bottom IF k IS TankCone;
+
+coneThickness (VerticalTankCalculation c, TankCone k) = IF isClad(k) THEN cladThickness(c) IF clad(c, zone(k)) ELSE thickness(c, k);
+coneAngle (VerticalTankCalculation c, TankCone k) = angle(c, base(k));
+coneApex (VerticalTankCalculation c, TankCone k) = apexDiameter(c, base(k));
+// Расчётные величины хранятся и пересчитываются действием recalculate при изменении параметров
+// (см. конец модуля): каждая считается своим небольшим шагом по уже посчитанным величинам.
+// Вычисляемые на лету, они складываются в выражения, слишком большие для сервера.
+
+// конусы
+coneDiameter 'Диаметр основания, мм' = DATA DOUBLE (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+coneHeight = DATA DOUBLE (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+coneSlant = DATA DOUBLE (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+coneFullArea = DATA DOUBLE (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+volume 'Объём, м³' = DATA NUMERIC[12,4] (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+fullHeight 'Высота с отбортовкой, мм' = DATA INTEGER (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+weight 'Вес готового, кг' = DATA INTEGER (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+blankSide = DATA DOUBLE (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+blankLength = DATA NUMERIC[10,2] (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+blankWidth = DATA NUMERIC[10,2] (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+blankSize 'Заготовка, м' (VerticalTankCalculation c, TankCone k) = CONCAT r'x', trimScale(blankLength(c, k)), trimScale(blankWidth(c, k));
+blankWeight 'Вес заготовки, кг' = DATA INTEGER (VerticalTankCalculation, TankCone) TABLE verticalTankCone;
+
+// ---- обечайки: колба и облицовка колбы — целые обечайки по ширине металла + последняя из остатка
+CLASS TankShell 'Обечайка' {
+    shell 'Колба',
+    cladShell 'Облицовка колбы'
+}
+
+TABLE verticalTankShell (VerticalTankCalculation, TankShell);
+
+format (VerticalTankCalculation c, TankShell s) = IF s = TankShell.shell THEN shellFormat(c) ELSE cladFormat(c) IF s IS TankShell;
+shellThickness (VerticalTankCalculation c, TankShell s) =
+    IF s = TankShell.shell THEN shellThickness(c) ELSE cladThickness(c) IF clad(c, TankZone.shell) IF s IS TankShell;
+overlap (TankShell s) = IF s = TankShell.cladShell THEN 50 ELSE 0 IF s IS TankShell;
+sheetWidth (VerticalTankCalculation c, TankShell s) = width(format(c, s)) IF shellThickness(c, s);
+ringHeight 'Высота обечайки, мм' (VerticalTankCalculation c, TankShell s) = sheetWidth(c, s) - overlap(s);
+
+shellDiameter 'Диаметр, мм' = DATA NUMERIC[12,2] (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+shellHeight 'Высота, мм' = DATA NUMERIC[12,2] (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+fullRings 'Целых обечаек, шт' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+lastRingHeight 'Последняя обечайка, мм' = DATA NUMERIC[12,2] (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+ringLength 'Длина обечайки, мм' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+weight 'Вес готового, кг' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+scrapHeight 'Высота обрезка, мм' = DATA NUMERIC[12,2] (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+scrapWeight 'Вес обрезка, кг' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+blankWeight 'Вес заготовки, кг' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+rollLength 'Отмотано металла, м' = DATA NUMERIC[10,2] (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+sheets 'Листов, шт' = DATA INTEGER (VerticalTankCalculation, TankShell) TABLE verticalTankShell;
+lastRingBlank 'Заготовка последней обечайки, мм' (VerticalTankCalculation c, TankShell s) =
+    (CONCAT r'x', trimScale(lastRingHeight(c, s)), STRING(ringLength(c, s))) IF lastRingHeight(c, s) > 0;
+
+// внутренний объём колбы на 1 мм высоты
+shellVolumePerMm = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+shellVolume 'Объём колбы, м³' = DATA NUMERIC[12,4] (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// ---- ноги
+legCount 'Количество ног, шт' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+legType = DATA TankLegType (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionLegType 'Диаметр трубы ноги' (VerticalTankCalculation c) = caption(legType(c));
+legPyramidal (VerticalTankCalculation c) = legType(c) = TankLegType.pyramidal;
+legDiameter (VerticalTankCalculation c) = diameter(legType(c));
+legWall 'Толщина стенки ноги, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+legProtrude 'Выступ ног за ёмкость, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+legAdjustable 'Регулировка ног' = DATA BOOLEAN (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingPipe 'Труба расшивки ног' = DATA ISTRING[50] (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+legLength 'Длина одной ноги, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+legPipeLength 'Труба на ноги, м' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+legsWeight 'Вес ног, кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingLength 'Расшивка ног, м' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// ---- рубашка (лист ADMIN, блоки W и AA)
+jacketShellType = DATA TankJacketType (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionJacketShellType 'Рубашка по колбе' (VerticalTankCalculation c) = caption(jacketShellType(c));
+jacketConeType = DATA TankJacketType (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionJacketConeType 'Рубашка по нижнему конусу' (VerticalTankCalculation c) = caption(jacketConeType(c));
+// рубашка считается, только если выбран её тип
+hasJacketShell (VerticalTankCalculation c) = jacketShellType(c) AND NOT jacketShellType(c) = TankJacketType.none;
+hasJacketCone (VerticalTankCalculation c) = jacketConeType(c) AND NOT jacketConeType(c) = TankJacketType.none;
+jacketThickness 'Толщина рубашки, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketGrade 'Марка стали рубашки' = DATA ISTRING[50] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketBeltHeight 'Высота пояса, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketBelts 'Количество поясов' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketOffset 'Отступ от ноги, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeHeight 'Высота рубашки на конусе, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// штрипс по колбе: каждый пояс — своя спираль из заданного числа витков с заданным шагом
+isStrips (VerticalTankCalculation c) = jacketShellType(c) = TankJacketType.strips;
+isPuklyaShell (VerticalTankCalculation c) = jacketShellType(c) = TankJacketType.puklya;
+stripProfile = DATA TankStripProfile (VerticalTankCalculation) TABLE verticalTankCalculation;
+captionStripProfile 'Профиль штрипса' (VerticalTankCalculation c) = caption(stripProfile(c));
+stripTurns 'Число витков' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+stripPitch 'Шаг витков, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+stripDevelopedWidth 'Развёртка штрипса, мм' (VerticalTankCalculation c) = developedWidth(stripProfile(c)) IF isStrips(c);
+stripBeltHeight 'Высота пояса штрипса, мм' (VerticalTankCalculation c) = stripTurns(c) * stripPitch(c) IF isStrips(c);
+stripTurnLength 'Длина витка, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+stripWeight 'Вес штрипса (+5%), кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+jacketBeltLength 'Длина пояса, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketBeltArea = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketShellArea 'Площадь рубашки по колбе, м²' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketShellWeight 'Вес рубашки по колбе, кг' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// по нижнему конусу: от ноги отступаем вдоль образующей
+bottomConeFullHeight (VerticalTankCalculation c) = coneHeight(c, TankCone.bottom) + 25;
+jacketSeamShift (VerticalTankCalculation c) =
+    jacketOffset(c) + round((legDiameter(c) - legProtrude(c)) / cosDegrees(angle(c, TankCone.bottom)), 0);
+jacketTopRise = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketTopDiameter = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeMax 'Максимальная высота на конусе, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeWorkHeight = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketBottomDiameter = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeSlant = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeArea 'Площадь рубашки по конусу, м²' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeBlankSide = DATA DOUBLE (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketConeWeight 'Вес рубашки по конусу, кг' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+jacketArea 'Общая площадь рубашек, м²' (VerticalTankCalculation c) = jacketShellArea(c) (+) jacketConeArea(c);
+jacketWeight 'Вес рубашки (+5%), кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+// ---- изоляция: площадь зон +5% запаса, закупается по слоям
+insulationArea 'Площадь изоляции (+5%), м²' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+insulationLayer 'Толщина слоя, мм' (VerticalTankCalculation c) = NUMERIC[6,2](NUMERIC[6,2](insulationThickness(c)) / insulationLayers(c));
+insulationBuy 'Изоляции к закупу, м²' (VerticalTankCalculation c) = NUMERIC[12,2](insulationArea(c) * insulationLayers(c));
+
+// ---- ёмкость в целом
+totalHeight 'Общая высота, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+diagonal 'Диагональ подъёма, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+totalVolume 'Объём общий, м³' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+workingVolume 'Объём рабочий, м³' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+lowerVolume 'Объём колбы с нижним конусом, м³' = DATA NUMERIC[10,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+liquidHeight 'Фактическая высота столба жидкости, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+shellRatio 'D / H колбы' (VerticalTankCalculation c) = NUMERIC[8,2](NUMERIC[10,2](diameter(c)) / height(c));
+liquidRatio 'D / H жидкости' (VerticalTankCalculation c) = NUMERIC[8,2](NUMERIC[10,2](diameter(c)) / liquidHeight(c));
+cladWeight 'Вес облицовки, кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+totalWeight 'Вес всей ёмкости, кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+
+warning 'Внимание' (VerticalTankCalculation c) = CONCAT '; ',
+    'Рабочий объём больше объёма колбы с нижним конусом' IF workingVolume(c) > lowerVolume(c),
+    'Высота рубашки на конусе ограничена ' + STRING(jacketConeMax(c)) + ' мм' IF hasJacketCone(c) AND jacketConeHeight(c) > jacketConeMax(c),
+    'Рубашку на нижний конус при пирамидальных ногах не ставят' IF hasJacketCone(c) AND legPyramidal(c),
+    'Количество ног должно быть 4, 5 или 6 — расшивка не посчитана' IF legCount(c) AND NOT bracingLength(c),
+    'Укажите число витков и шаг штрипса' IF isStrips(c) AND NOT (stripTurns(c) AND stripPitch(c)),
+    'Шаг витков меньше ширины штрипса' IF isStrips(c) AND stripPitch(c) < profileWidth(stripProfile(c)),
+    'Пояса штрипса не помещаются на колбе' IF isStrips(c) AND jacketBelts(c) * stripBeltHeight(c) > height(c);
+
+// штрипс ставится только на колбу
+CONSTRAINT jacketConeType(VerticalTankCalculation c) = TankJacketType.strips CHECKED BY jacketConeType[VerticalTankCalculation]
+    MESSAGE 'Штрипс ставится только на колбу; для нижнего конуса выберите пуклю';
+
+// ---- значения по умолчанию для новых расчётов (Настройки CRM)
+defaultSteelGrade 'Марка стали' = DATA ISTRING[50] ();
+defaultSteelPrice 'Цена стали корпуса, ₽/кг' = DATA NUMERIC[14,2] ();
+defaultLegPipePrice 'Цена трубы на ноги, ₽/м' = DATA NUMERIC[14,2] ();
+defaultLegPrice 'Цена опоры ноги, ₽/шт' = DATA NUMERIC[14,2] ();
+defaultBracingPrice 'Цена расшивки ног, ₽/м' = DATA NUMERIC[14,2] ();
+defaultCladPrice 'Цена стали облицовки, ₽/кг' = DATA NUMERIC[14,2] ();
+defaultInsulationPrice 'Цена изоляции, ₽/м²' = DATA NUMERIC[14,2] ();
+
+// новый расчёт заполняется ценами из настроек и типовыми значениями шаблона
+WHEN LOCAL SET(VerticalTankCalculation c IS VerticalTankCalculation) DO {
+    equipmentName(c) <- 'Резервуар вертикальный цилиндрический' WHERE NOT equipmentName(c);
+    steelGrade(c) <- defaultSteelGrade() WHERE NOT steelGrade(c);
+    steelPrice(c) <- defaultSteelPrice() WHERE NOT steelPrice(c);
+    legPipePrice(c) <- defaultLegPipePrice() WHERE NOT legPipePrice(c);
+    legPrice(c) <- defaultLegPrice() WHERE NOT legPrice(c);
+    bracingPrice(c) <- defaultBracingPrice() WHERE NOT bracingPrice(c);
+    cladPrice(c) <- defaultCladPrice() WHERE NOT cladPrice(c);
+    insulationPrice(c) <- defaultInsulationPrice() WHERE NOT insulationPrice(c);
+
+    surface(c) <- TankSurface.s2B WHERE NOT surface(c);
+    coneFormat(c) <- TankShellFormat.sheet1500x3000 WHERE NOT coneFormat(c);
+    shellFormat(c) <- TankShellFormat.roll1500 WHERE NOT shellFormat(c);
+
+    jacketShellType(c) <- TankJacketType.none WHERE NOT jacketShellType(c);
+    jacketConeType(c) <- TankJacketType.none WHERE NOT jacketConeType(c);
+    jacketGrade(c) <- defaultSteelGrade() WHERE NOT jacketGrade(c);
+    jacketThickness(c) <- 2 WHERE NOT jacketThickness(c);
+    jacketBeltHeight(c) <- 1000 WHERE NOT jacketBeltHeight(c);
+    jacketBelts(c) <- 2 WHERE NOT jacketBelts(c);
+    jacketOffset(c) <- 50 WHERE NOT jacketOffset(c);
+    legProtrude(c) <- 50 WHERE NOT legProtrude(c);
+
+    insulationType(c) <- TankInsulationType.rubber WHERE NOT insulationType(c);
+    insulationThickness(c) <- 50 WHERE NOT insulationThickness(c);
+    insulationLayers(c) <- 2 WHERE NOT insulationLayers(c);
+
+    cladGrade(c) <- defaultSteelGrade() WHERE NOT cladGrade(c);
+    cladThickness(c) <- 1.5 WHERE NOT cladThickness(c);
+    cladSurface(c) <- TankSurface.s2B WHERE NOT cladSurface(c);
+    cladFormat(c) <- TankShellFormat.roll1500 WHERE NOT cladFormat(c);
+}
+
+// ---- пересчёт хранимых величин при изменении параметров расчёта, по шагам: каждый шаг опирается на уже посчитанные
+recalculate 'Пересчитать' ABSTRACT LIST (VerticalTankCalculation);
+
+recalculate (VerticalTankCalculation c) + {
+    // конусы: облицовка надевается поверх изоляции
+    coneDiameter(c, TankCone k) <- diameter(c) + (IF isClad(k) THEN 2 * insulationUnder(c, zone(k)) ELSE 0) IF coneThickness(c, k);
+    // высота конуса без отбортовки (катет) и образующая усечённого конуса
+    coneHeight(c, TankCone k) <- (coneDiameter(c, k) - coneApex(c, k)) / 2.0 * tanDegrees(coneAngle(c, k));
+    coneSlant(c, TankCone k) <- sqrt(sqr((coneDiameter(c, k) - coneApex(c, k)) / 2.0) + sqr(coneHeight(c, k)));
+    // площадь конуса и отбортовки — 25 мм по всей окружности (+150 мм запас по длине)
+    coneFullArea(c, TankCone k) <- pi() * (coneDiameter(c, k) + coneApex(c, k)) / 2.0 * coneSlant(c, k) / 1000000.0
+                                   + 25 * (pi() * coneDiameter(c, k) + 150) / 1000000.0;
+    // внутренний объём конуса и отбортовки
+    volume(c, TankCone k) <- NUMERIC[12,4](
+        pi() * coneHeight(c, k) / 3 * (sqr(coneDiameter(c, k) / 2.0 - coneThickness(c, k))
+                                       + (coneDiameter(c, k) / 2.0 - coneThickness(c, k)) * (coneApex(c, k) / 2.0 - coneThickness(c, k))
+                                       + sqr(coneApex(c, k) / 2.0 - coneThickness(c, k))) / 1000000000.0
+        + pi() * sqr(coneDiameter(c, k) / 2.0 - coneThickness(c, k)) * 25 / 1000000000.0) IF NOT isClad(k);
+    fullHeight(c, TankCone k) <- INTEGER(ceil(coneHeight(c, k) + 25, 5)) IF coneHeight(c, k) > 0;
+    weight(c, TankCone k) <- INTEGER(ceil(coneFullArea(c, k) * coneThickness(c, k) * 8));
+    // заготовка конуса — квадрат со стороной в две полные образующие + 25 мм; при угле от 60° — половина квадрата
+    blankSide(c, TankCone k) <-
+        (sqrt(sqr(coneApex(c, k) / 2.0) + sqr(coneApex(c, k) / 2.0 * tanDegrees(coneAngle(c, k)))) + coneSlant(c, k) + 25) * 2 / 1000;
+    blankLength(c, TankCone k) <- NUMERIC[10,2](round(blankSide(c, k), 2));
+    blankWidth(c, TankCone k) <- NUMERIC[10,2](round(IF coneAngle(c, k) >= 60 THEN blankSide(c, k) / 2 ELSE blankSide(c, k), 2));
+    blankWeight(c, TankCone k) <- INTEGER(ceil(blankLength(c, k) * blankWidth(c, k) * 8 * coneThickness(c, k)));
+
+    // обечайки; облицовка колбы: поверх изоляции + 20 мм по диаметру, + 100 мм по высоте, нахлёст 50 мм
+    shellDiameter(c, TankShell s) <-
+        (IF s = TankShell.shell THEN diameter(c) ELSE diameter(c) + 2 * (OVERRIDE insulationUnder(c, TankZone.shell), 0) + 20)
+        IF shellThickness(c, s);
+    shellHeight(c, TankShell s) <-
+        (IF s = TankShell.shell THEN height(c) ELSE height(c) + 2 * (OVERRIDE insulationUnder(c, TankZone.shell), 0) + 100)
+        IF shellThickness(c, s);
+    fullRings(c, TankShell s) <- divideInteger(shellHeight(c, s), ringHeight(c, s));
+    lastRingHeight(c, TankShell s) <- mod(shellHeight(c, s), ringHeight(c, s));
+    ringLength(c, TankShell s) <- INTEGER(ceil(pi() * shellDiameter(c, s), 5)) + 150;
+    weight(c, TankShell s) <-
+        INTEGER(ceil((fullRings(c, s) * sheetWidth(c, s) + lastRingHeight(c, s)) * ringLength(c, s) * shellThickness(c, s) * 8 / 1000000.0));
+    scrapHeight(c, TankShell s) <- sheetWidth(c, s) - lastRingHeight(c, s) IF lastRingHeight(c, s) > 0;
+    scrapWeight(c, TankShell s) <- INTEGER(ceil(scrapHeight(c, s) * ringLength(c, s) * shellThickness(c, s) * 8 / 1000000.0));
+    blankWeight(c, TankShell s) <- weight(c, s) (+) scrapWeight(c, s);
+    rollLength(c, TankShell s) <- NUMERIC[10,2]((fullRings(c, s) (+) (1 IF lastRingHeight(c, s) > 0)) * ringLength(c, s) / 1000.0);
+    sheets(c, TankShell s) <- INTEGER(ceil(rollLength(c, s) * 1000 / length(format(c, s))));
+    shellVolumePerMm(c) <- pi() * sqr(diameter(c) / 2.0 - shellThickness(c)) / 1000000000.0;
+    shellVolume(c) <- NUMERIC[12,4](shellVolumePerMm(c) * height(c));
+
+    // ноги: от пола до низа нижнего конуса + 100 мм, округлено до 10 мм; труба и расшивка закупаются хлыстами по 6 м
+    legLength(c) <- INTEGER(round((floorHeight(c) + 100) (+) fullHeight(c, TankCone.bottom), -1));
+    legPipeLength(c) <- INTEGER(ceil(legLength(c) * legCount(c) / 6000.0) * 6);
+    legsWeight(c) <- INTEGER(ceil(legCount(c) * round(legDiameter(c) * pi() / 1000 * legLength(c) / 1000 * legWall(c) * 8, 2)));
+    // методика шаблона для расшивки есть для 4, 5 и 6 ног
+    bracingLength(c) <- INTEGER(CASE
+        WHEN legCount(c) = 4 THEN ceil(sqrt(sqr(DOUBLE(diameter(c))) / 2) * 4 / 6000) * 6
+        WHEN legCount(c) = 5 THEN ceil(diameter(c) * sinDegrees(36) * 5 / 6000) * 6
+        WHEN legCount(c) = 6 THEN ceil(diameter(c) / 2.0 * 6 / 6000) * 6);
+
+    // рубашка по колбе: пояса по диаметру ёмкости + 20 мм
+    // штрипс: виток — по спирали на диаметре середины профиля (D + высота профиля), длина пояса = витки × виток
+    stripTurnLength(c) <- INTEGER(ceil(sqrt(sqr(pi() * (diameter(c) + profileHeight(stripProfile(c))))
+                                            + sqr(DOUBLE(stripPitch(c)))))) IF isStrips(c);
+    jacketBeltLength(c) <- IF isStrips(c) THEN stripTurnLength(c) * stripTurns(c)
+                           ELSE INTEGER(ceil(pi() * (diameter(c) + 20), 5)) + 150 IF hasJacketShell(c);
+    // площадь рубашки: у штрипса — полоса шириной профиля вдоль спирали
+    jacketBeltArea(c) <- NUMERIC[10,2](round(jacketBeltLength(c) / 1000.0
+                         * (IF isStrips(c) THEN profileWidth(stripProfile(c)) ELSE jacketBeltHeight(c)) / 1000, 2));
+    jacketShellArea(c) <- NUMERIC[10,2](jacketBeltArea(c) * jacketBelts(c));
+    // вес: у штрипса — развёртка × длина спирали × толщина профиля
+    jacketShellWeight(c) <- IF isStrips(c)
+        THEN NUMERIC[10,2](round(developedWidth(stripProfile(c)) / 1000.0 * jacketBeltLength(c) / 1000.0
+                                 * profileThickness(stripProfile(c)) * 8 * jacketBelts(c), 2))
+        ELSE NUMERIC[10,2](round(round(jacketThickness(c) * jacketBeltArea(c) * 8, 2) * jacketBelts(c), 2));
+    stripWeight(c) <- INTEGER(ceil(jacketShellWeight(c) * 1.05)) IF isStrips(c);
+    // рубашка по нижнему конусу: снизу оставляем 50 мм
+    jacketTopRise(c) <- sinDegrees(angle(c, TankCone.bottom)) * jacketSeamShift(c) + 25;
+    jacketTopDiameter(c) <- diameter(c) - 2 * round(cosDegrees(angle(c, TankCone.bottom)) * jacketSeamShift(c), 0) + 20;
+    // у пирамидальных ног рубашку на конус по шаблону не ставят
+    jacketConeMax(c) <- INTEGER(MAX 0, round(round(bottomConeFullHeight(c), 0) - 50 - jacketTopRise(c), 0)) IF legDiameter(c);
+    jacketConeWorkHeight(c) <- (MIN jacketConeHeight(c), jacketConeMax(c)) IF hasJacketCone(c) AND jacketConeHeight(c) > 0;
+    jacketBottomDiameter(c) <-
+        round((bottomConeFullHeight(c) - jacketTopRise(c) - jacketConeWorkHeight(c)) / tanDegrees(angle(c, TankCone.bottom)) * 2
+              + apexDiameter(c, TankCone.bottom), 2) + 20;
+    jacketConeSlant(c) <- sqrt(sqr(jacketTopDiameter(c) / 2.0 - jacketBottomDiameter(c) / 2.0) + sqr(DOUBLE(jacketConeWorkHeight(c))));
+    jacketConeArea(c) <-
+        NUMERIC[10,2](ceil(pi() * (jacketTopDiameter(c) / 2.0 + jacketBottomDiameter(c) / 2.0) * jacketConeSlant(c) / 1000000.0, 0.01));
+    jacketConeBlankSide(c) <-
+        (sqrt(sqr(jacketBottomDiameter(c) / 2.0) + sqr(jacketBottomDiameter(c) / 2.0 * tanDegrees(angle(c, TankCone.bottom))))
+         + jacketConeSlant(c)) * 2 / 1000;
+    jacketConeWeight(c) <- NUMERIC[10,2](round(
+        round(jacketConeBlankSide(c), 2)
+        * round(IF angle(c, TankCone.bottom) >= 60 THEN jacketConeBlankSide(c) / 2 ELSE jacketConeBlankSide(c), 2)
+        * 8 * jacketThickness(c), 2));
+    // к весу рубашки +5% запаса
+    jacketWeight(c) <- INTEGER(ceil((jacketShellWeight(c) (+) jacketConeWeight(c)) * 1.05));
+
+    // изоляция: площадь выбранных зон +5% запаса
+    insulationArea(c) <- NUMERIC[10,2](round(((coneFullArea(c, TankCone.top) IF insulated(c, TankZone.top))
+                                              (+) (height(c) * ringLength(c, TankShell.shell) / 1000000.0 IF insulated(c, TankZone.shell))
+                                              (+) (coneFullArea(c, TankCone.bottom) IF insulated(c, TankZone.bottom))) * 1.05, 2));
+
+    // ёмкость в целом; высота столба жидкости считается от низа нижнего конуса
+    totalHeight(c) <- floorHeight(c) + height(c) + 200 (+) fullHeight(c, TankCone.bottom) (+) fullHeight(c, TankCone.top);
+    diagonal(c) <- INTEGER(ceil(sqrt(sqr(DOUBLE(diameter(c))) + sqr(DOUBLE(totalHeight(c)))), 10));
+    totalVolume(c) <- NUMERIC[10,2](round(shellVolume(c) (+) volume(c, TankCone.top) (+) volume(c, TankCone.bottom), 2));
+    workingVolume(c) <- NUMERIC[10,2](round(totalVolume(c) * workingPercent(c) / 100, 2));
+    lowerVolume(c) <- NUMERIC[10,2](round(shellVolume(c) (+) volume(c, TankCone.bottom), 2));
+    liquidHeight(c) <- INTEGER(ceil(bottomConeFullHeight(c) + height(c) * workingPercent(c) / 100, 5));
+    cladWeight(c) <- weight(c, TankCone.cladTop) (+) weight(c, TankCone.cladBottom) (+) weight(c, TankShell.cladShell);
+    totalWeight(c) <- weight(c, TankShell.shell) (+) weight(c, TankCone.top) (+) weight(c, TankCone.bottom)
+                      (+) legsWeight(c) (+) jacketWeight(c) (+) cladWeight(c);
+}
+
+// при выборе штрипса подставляется типовой профиль
+WHEN LOCAL SETCHANGED(jacketShellType(VerticalTankCalculation c)) AND isStrips(c) AND NOT stripProfile(c) DO
+    stripProfile(c) <- TankStripProfile.p120x10x2;
+
+// пересчёт при изменении любого параметра расчёта
+WHEN LOCAL (CHANGED(diameter(VerticalTankCalculation c)) OR CHANGED(height(c)) OR CHANGED(floorHeight(c)) OR CHANGED(workingPercent(c))
+            OR CHANGED(steelGrade(c)) OR CHANGED(surface(c)) OR CHANGED(coneFormat(c))
+            OR CHANGED(shellFormat(c)) OR CHANGED(shellThickness(c)) OR CHANGED(subtractScrap(c))
+            OR CHANGED(steelPrice(c)) OR CHANGED(legPipePrice(c)) OR CHANGED(legPrice(c)) OR CHANGED(bracingPrice(c))
+            OR CHANGED(cladPrice(c)) OR CHANGED(insulationPrice(c))
+            OR (GROUP SUM 1 IF CHANGED(thickness(c, TankCone k)) OR CHANGED(angle(c, k)) OR CHANGED(apexDiameter(c, k)))
+            OR (GROUP SUM 1 IF CHANGED(insulated(c, TankZone z)) OR CHANGED(clad(c, z)))
+            OR CHANGED(insulationType(c)) OR CHANGED(insulationThickness(c)) OR CHANGED(insulationLayers(c))
+            OR CHANGED(cladThickness(c)) OR CHANGED(cladGrade(c)) OR CHANGED(cladSurface(c)) OR CHANGED(cladFormat(c))
+            OR CHANGED(cladSubtractScrap(c))
+            OR CHANGED(legCount(c)) OR CHANGED(legType(c)) OR CHANGED(legWall(c)) OR CHANGED(legProtrude(c))
+            OR CHANGED(legAdjustable(c)) OR CHANGED(bracingPipe(c))
+            OR CHANGED(jacketShellType(c)) OR CHANGED(jacketConeType(c)) OR CHANGED(jacketThickness(c)) OR CHANGED(jacketGrade(c))
+            OR CHANGED(jacketBeltHeight(c)) OR CHANGED(jacketBelts(c)) OR CHANGED(jacketOffset(c)) OR CHANGED(jacketConeHeight(c))
+            OR CHANGED(stripProfile(c)) OR CHANGED(stripTurns(c)) OR CHANGED(stripPitch(c)))
+           AND c IS VerticalTankCalculation DO
+    recalculate(c);

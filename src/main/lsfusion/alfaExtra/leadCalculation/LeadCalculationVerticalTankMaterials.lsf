@@ -1,0 +1,131 @@
+MODULE LeadCalculationVerticalTankMaterials;
+
+REQUIRE LeadCalculationVerticalTank;
+
+NAMESPACE LeadCalculation;
+
+// Материалы ёмкости по методике шаблона. Каждая деталь даёт строку металла или комплектующих;
+// детали с одинаковым материалом (например, оба конуса из одного листа) сводятся в одну строку.
+
+CLASS TankPart 'Деталь ёмкости' {
+    topCone 'Конус верхний',
+    shell 'Колба',
+    bottomCone 'Конус нижний',
+    jacket 'Рубашка',
+    jacketStrips 'Рубашка-штрипс колбы',
+    insulation 'Изоляция',
+    cladTop 'Облицовка верхнего конуса',
+    cladShell 'Облицовка колбы',
+    cladBottom 'Облицовка нижнего конуса',
+    legPipe 'Ноги',
+    feet 'Опоры ног',
+    bracing 'Расшивка ног',
+    shellScrap 'Обрезки колбы (возврат)',
+    cladScrap 'Обрезки облицовки колбы (возврат)'
+}
+
+index (TankPart p) = CASE
+    WHEN p = TankPart.topCone THEN 1
+    WHEN p = TankPart.shell THEN 2
+    WHEN p = TankPart.bottomCone THEN 3
+    WHEN p = TankPart.jacket THEN 4
+    WHEN p = TankPart.jacketStrips THEN 5
+    WHEN p = TankPart.insulation THEN 6
+    WHEN p = TankPart.cladTop THEN 7
+    WHEN p = TankPart.cladShell THEN 8
+    WHEN p = TankPart.cladBottom THEN 9
+    WHEN p = TankPart.legPipe THEN 10
+    WHEN p = TankPart.feet THEN 11
+    WHEN p = TankPart.bracing THEN 12
+    WHEN p = TankPart.shellScrap THEN 13
+    WHEN p = TankPart.cladScrap THEN 14;
+
+// обрезки, возвращённые в стоимость, уменьшают сумму
+credit (TankPart p) = p = TankPart.shellScrap OR p = TankPart.cladScrap;
+
+// толщина в названии: «3», «1,5»
+thicknessText (NUMERIC[6,2] t) = replace(trimScale(t), '.', ',');
+
+// металл: «Лист 3х1500х3000 AISI 304 2B», «Рулон 3х1500 AISI 304 2B»
+metalName (NUMERIC[6,2] t, TankShellFormat f, ISTRING[50] grade, TankSurface s) = ISTRING[200](CONCAT ' ',
+    (IF isRoll(f) THEN 'Рулон' ELSE 'Лист'),
+    thicknessText(t) + r'х' + size(f),
+    grade,
+    code(s));
+
+materialName (VerticalTankCalculation c, TankPart p) = ISTRING[200](CASE
+    WHEN p = TankPart.topCone THEN metalName(thickness(c, TankCone.top), coneFormat(c), steelGrade(c), surface(c))
+    WHEN p = TankPart.shell THEN metalName(shellThickness(c), shellFormat(c), steelGrade(c), surface(c))
+    WHEN p = TankPart.bottomCone THEN metalName(thickness(c, TankCone.bottom), coneFormat(c), steelGrade(c), surface(c))
+    WHEN p = TankPart.jacket THEN metalName(jacketThickness(c), coneFormat(c), jacketGrade(c), surface(c))
+    WHEN p = TankPart.jacketStrips THEN metalName(profileThickness(stripProfile(c)), coneFormat(c), jacketGrade(c), surface(c))
+    WHEN p = TankPart.insulation THEN CONCAT ' ', caption(insulationType(c)), thicknessText(insulationLayer(c)) + ' мм'
+    WHEN p = TankPart.cladTop OR p = TankPart.cladBottom THEN metalName(cladThickness(c), coneFormat(c), cladGrade(c), cladSurface(c))
+    WHEN p = TankPart.cladShell THEN metalName(cladThickness(c), cladFormat(c), cladGrade(c), cladSurface(c))
+    WHEN p = TankPart.legPipe THEN
+        (IF legPyramidal(c) THEN CONCAT ' ', 'Материал на пирамидальные ноги', steelGrade(c), 't=' + thicknessText(legWall(c)) + ' мм'
+         ELSE CONCAT ' ', 'Труба ф' + STRING(legDiameter(c)) + r'х' + thicknessText(legWall(c)), steelGrade(c))
+    WHEN p = TankPart.feet THEN (IF legAdjustable(c) THEN 'Опора регулируемая' ELSE 'Опора нерегулируемая (пята)')
+    WHEN p = TankPart.bracing THEN CONCAT ' ', 'Труба', bracingPipe(c), steelGrade(c)
+    WHEN p = TankPart.shellScrap THEN 'Обрезки колбы (возврат)'
+    WHEN p = TankPart.cladScrap THEN 'Обрезки облицовки колбы (возврат)')
+    IF c IS VerticalTankCalculation;
+
+materialPrice (VerticalTankCalculation c, TankPart p) = CASE
+    WHEN p = TankPart.insulation THEN insulationPrice(c)
+    WHEN p = TankPart.cladTop OR p = TankPart.cladShell OR p = TankPart.cladBottom OR p = TankPart.cladScrap THEN cladPrice(c)
+    WHEN p = TankPart.legPipe THEN legPipePrice(c)
+    WHEN p = TankPart.feet THEN legPrice(c)
+    WHEN p = TankPart.bracing THEN bracingPrice(c)
+    WHEN p IS TankPart THEN steelPrice(c);
+
+uom 'Ед. изм.' (TankPart p) = CASE
+    WHEN p = TankPart.insulation THEN 'м²'
+    WHEN p = TankPart.legPipe OR p = TankPart.bracing THEN 'м'
+    WHEN p = TankPart.feet THEN 'шт'
+    WHEN p IS TankPart THEN 'кг';
+
+// Название, количество и цена детали хранятся и пересчитываются действием recalculate при изменении параметров расчёта:
+// каждая деталь считается своим небольшим запросом. Формулы всех деталей в одном выражении
+// (вычисляемом или материализованном) слишком велики для сервера.
+TABLE verticalTankPart (VerticalTankCalculation, TankPart);
+
+name 'Материал' = DATA ISTRING[200] (VerticalTankCalculation, TankPart) TABLE verticalTankPart;
+quantity 'Количество' = DATA NUMERIC[14,3] (VerticalTankCalculation, TankPart) TABLE verticalTankPart;
+price 'Цена' = DATA NUMERIC[14,2] (VerticalTankCalculation, TankPart) TABLE verticalTankPart;
+
+// материалы пересчитываются после геометрии (пересчёт в LeadCalculationVerticalTank)
+recalculate (VerticalTankCalculation c) + {
+    name(c, TankPart p) <- materialName(c, p);
+    price(c, TankPart p) <- materialPrice(c, p);
+    // выключенные узлы дают пусто и в материалы не попадают
+    quantity(c, TankPart.topCone) <- blankWeight(c, TankCone.top);
+    quantity(c, TankPart.shell) <- blankWeight(c, TankShell.shell);
+    quantity(c, TankPart.bottomCone) <- blankWeight(c, TankCone.bottom);
+    // пукля (колба и конус) и штрипс — разные строки: толщина штрипса задаётся профилем
+    quantity(c, TankPart.jacket) <- INTEGER(ceil(((jacketShellWeight(c) IF NOT isStrips(c)) (+) jacketConeWeight(c)) * 1.05));
+    quantity(c, TankPart.jacketStrips) <- stripWeight(c);
+    quantity(c, TankPart.insulation) <- insulationBuy(c);
+    quantity(c, TankPart.cladTop) <- blankWeight(c, TankCone.cladTop);
+    quantity(c, TankPart.cladShell) <- blankWeight(c, TankShell.cladShell);
+    quantity(c, TankPart.cladBottom) <- blankWeight(c, TankCone.cladBottom);
+    quantity(c, TankPart.legPipe) <- legPipeLength(c);
+    quantity(c, TankPart.feet) <- legCount(c);
+    quantity(c, TankPart.bracing) <- bracingLength(c);
+    quantity(c, TankPart.shellScrap) <- scrapWeight(c, TankShell.shell) IF subtractScrap(c);
+    quantity(c, TankPart.cladScrap) <- scrapWeight(c, TankShell.cladShell) IF cladSubtractScrap(c);
+}
+
+// строка материалов — первая по порядку деталь своего материала; количество — по всем таким деталям
+firstPart (VerticalTankCalculation c, ISTRING[200] material) =
+    GROUP LAST TankPart q ORDER DESC index(q), q WHERE quantity(c, q) AND name(c, q) = material;
+isLine (VerticalTankCalculation c, TankPart p) = firstPart(c, name(c, p)) = p;
+
+lineQuantity 'Количество' (VerticalTankCalculation c, TankPart p) =
+    GROUP SUM quantity(c, TankPart q) IF name(c, q) = name(c, p);
+purpose 'Для чего' (VerticalTankCalculation c, TankPart p) =
+    GROUP CONCAT STRING(caption(TankPart q)) IF quantity(c, q) AND name(c, q) = name(c, p), ', ' ORDER index(q), q CHARWIDTH 30;
+lineSum 'Сумма' (VerticalTankCalculation c, TankPart p) = NUMERIC[16,2](
+    IF credit(p) THEN -(lineQuantity(c, p) * price(c, p)) ELSE lineQuantity(c, p) * price(c, p));
+
+autoMaterialsSum (VerticalTankCalculation c) += GROUP SUM lineSum(c, TankPart p) IF isLine(c, p);

@@ -1,4 +1,5 @@
 MODULE AlfaExtra;
 
 REQUIRE MyCompanyExtra,
-        ManufacturingOrderActiveFilter;
+        ManufacturingOrderActiveFilter,
+        LeadCalculationVerticalTankForm;

@@ -1,0 +1,131 @@
+MODULE LeadCalculation;
+
+REQUIRE Lead, Employee;
+
+// Расчёты заявок: общий документ «Расчёт» по лиду. У лида может быть несколько расчётов.
+// Виды расчёта (вертикальная ёмкость и т. д.) — наследники LeadCalculation в своих модулях.
+// Блоки расчёта, общие для всех видов, подключаются к форме вида метакодом:
+// сейчас это прочие материалы, позже — трудоёмкость.
+
+CLASS LeadCalculationStatus 'Статус расчёта' {
+    inWork 'В работе',
+    done 'Завершён'
+}
+
+CLASS ABSTRACT LeadCalculation 'Расчёт заявки';
+TABLE leadCalculation (LeadCalculation);
+
+lead 'Лид' = DATA Lead (LeadCalculation) NONULL DELETE INDEXED;
+nameLead 'Лид' (LeadCalculation c) = idName(lead(c)) CHARWIDTH 30;
+
+// номер расчёта внутри лида: 1, 2, 3...
+number 'Номер' = DATA INTEGER (LeadCalculation) IN id;
+WHEN LOCAL SET(LeadCalculation c IS LeadCalculation) AND NOT CHANGED(number(c)) DO
+    number(c) <- (GROUP MAX number(LeadCalculation o) IF lead(o) = lead(c)) (+) 1;
+
+dateTime 'Дата' = DATA DATETIME (LeadCalculation) IN id;
+WHEN LOCAL SET(LeadCalculation c IS LeadCalculation) AND NOT CHANGED(dateTime(c)) DO dateTime(c) <- currentDateTime();
+
+name 'Наименование' = DATA ISTRING[150] (LeadCalculation) CHARWIDTH 30 IN base;
+equipmentName 'Наименование оборудования' = DATA ISTRING[200] (LeadCalculation) CHARWIDTH 30 IN base;
+
+typeName 'Вид расчёта' = ABSTRACT ISTRING[100] (LeadCalculation) CHARWIDTH 25;
+
+// исполнитель — продавец лида на момент создания расчёта
+executor = DATA Employee (LeadCalculation);
+nameExecutor 'Исполнитель' (LeadCalculation c) = name(executor(c)) IN base;
+WHEN LOCAL SET(LeadCalculation c IS LeadCalculation) AND NOT CHANGED(executor(c)) DO executor(c) <- salesPerson(lead(c));
+
+status = DATA LeadCalculationStatus (LeadCalculation);
+captionStatus 'Статус' (LeadCalculation c) = caption(status(c)) IN base;
+WHEN LOCAL SET(LeadCalculation c IS LeadCalculation) AND NOT CHANGED(status(c)) DO status(c) <- LeadCalculationStatus.inWork;
+
+// материалы: рассчитанные по методике вида расчёта и введённые вручную
+autoMaterialsSum 'Рассчитанные материалы' = ABSTRACT NUMERIC[16,2] (LeadCalculation);
+
+CLASS LeadCalculationMaterial 'Материал расчёта';
+TABLE leadCalculationMaterial (LeadCalculationMaterial);
+
+calculation = DATA LeadCalculation (LeadCalculationMaterial) NONULL DELETE INDEXED;
+name 'Наименование' = DATA ISTRING[200] (LeadCalculationMaterial) CHARWIDTH 30 IN base;
+quantity 'Количество' = DATA NUMERIC[14,3] (LeadCalculationMaterial) IN base;
+uom 'Ед. изм.' = DATA ISTRING[30] (LeadCalculationMaterial) CHARWIDTH 10 IN base;
+price 'Цена' = DATA NUMERIC[14,2] (LeadCalculationMaterial) IN base;
+sum 'Сумма' (LeadCalculationMaterial m) = NUMERIC[16,2](quantity(m) * price(m));
+
+manualMaterialsSum 'Прочие материалы' (LeadCalculation c) = GROUP SUM NUMERIC[16,2](sum(LeadCalculationMaterial m)) IF calculation(m) = c;
+materialsSum 'Итого материалы' (LeadCalculation c) = autoMaterialsSum(c) (+) manualMaterialsSum(c);
+
+// блок «Прочие материалы» для формы вида расчёта: объект mm, его BOX форма размещает сама
+META defineLeadCalculationMaterials(form, object)
+    EXTEND FORM form
+        OBJECTS mm = LeadCalculationMaterial
+        PROPERTIES(mm) name, quantity, uom, price, sum READONLY, NEW, DELETE
+        FILTERS calculation(mm) = object
+    ;
+END
+
+// создание расчёта из карточки лида; реализует модуль вида расчёта
+// (когда видов станет несколько, здесь появится выбор вида)
+newCalculation ABSTRACT LIST (Lead);
+
+createCalculation 'Создать расчёт' (Lead l) {
+    APPLY;
+    IF canceled() THEN RETURN;
+
+    NEWSESSION {
+        newCalculation(l);
+    }
+}
+
+countCalculations (Lead l) = GROUP SUM 1 IF lead(LeadCalculation c) = l;
+
+// удаление из формы расчёта: после подтверждения расчёт удаляется и форма закрывается
+deleteCalculation 'Удалить расчёт' (LeadCalculation c) {
+    ASK 'Удалить расчёт № ' + STRING(number(c)) + '?' DO {
+        DELETE c;
+        APPLY;
+        IF NOT canceled() THEN formClose();
+    }
+}
+
+EXTEND FORM lead
+    PROPERTIES(l) createCalculation
+
+    OBJECTS lc = LeadCalculation
+    PROPERTIES(lc) READONLY number, dateTime, equipmentName, nameExecutor, captionStatus, materialsSum
+    PROPERTIES(lc) NEWSESSION EDIT GRID, DELETE TOOLBAR
+    FILTERS lead(lc) = l
+;
+
+DESIGN lead {
+    secondaryActions {
+        MOVE PROPERTY(createCalculation(l)) { valueClass = 'btn-secondary'; }
+    }
+    relatedDoc {
+        MOVE BOX(lc) {
+            showIf = countCalculations(l);
+            caption = badged('Расчёты', countCalculations(l));
+        }
+        REMOVE TOOLBARSYSTEM(lc);
+    }
+}
+
+// список всех расчётов
+FORM leadCalculations 'Расчёты заявок'
+    OBJECTS c = LeadCalculation
+    PROPERTIES(c) READONLY nameLead, number, dateTime, name, equipmentName, typeName, nameExecutor, captionStatus, materialsSum
+    PROPERTIES(c) NEWSESSION EDIT, DELETE
+
+    FILTERGROUP status
+        FILTER 'В работе' status(c) = LeadCalculationStatus.inWork DEFAULT
+        FILTER 'Завершённые' status(c) = LeadCalculationStatus.done
+
+    LIST LeadCalculation OBJECT c
+;
+
+NAVIGATOR {
+    CRM.operations {
+        NEW leadCalculations;
+    }
+}

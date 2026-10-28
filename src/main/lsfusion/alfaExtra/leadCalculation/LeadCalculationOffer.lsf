@@ -1,0 +1,51 @@
+MODULE LeadCalculationOffer;
+
+REQUIRE LeadCalculationLabor;
+
+NAMESPACE LeadCalculation;
+
+// Коммерческое предложение по расчёту заявки — по шаблону «ШАБЛОН КП.docx».
+// Цена — «Цена для КП» расчёта (себестоимость + маржа, уже с НДС). Вручную вводятся только описание оборудования и срок изготовления.
+// Эскиз оборудования форма вида расчёта снимает со своего экрана перед печатью (offerScheme).
+// Печатная форма — LeadCalculation_leadCalculationOffer.jrxml рядом с модулем.
+
+// форматированный текст (жирный, курсив, списки и т.п.) — хранится как HTML, в печатную форму выводится с разметкой
+offerDescription 'Описание оборудования' = DATA RICHTEXT (LeadCalculation);
+offerTerms 'Срок изготовления' = DATA ISTRING[200] (LeadCalculation) CHARWIDTH 30;
+
+offerScheme = DATA LOCAL IMAGEFILE (LeadCalculation);
+
+// кому: клиент лида (или юрлицо) и email
+offerRecipient (LeadCalculation c) = CONCAT ', ', (OVERRIDE nameCustomer(lead(c)), legalEntityName(lead(c))), email(lead(c));
+
+FORM leadCalculationOfferParams 'Коммерческое предложение'
+    OBJECTS c = LeadCalculation PANEL
+    PROPERTIES(c) offerDescription, offerTerms
+;
+
+DESIGN leadCalculationOfferParams {
+    size = (900, 600);
+    OBJECTS {
+        MOVE PROPERTY(offerDescription(c)) { fill = 1; charHeight = 15; captionVertical = TRUE; }
+        MOVE PROPERTY(offerTerms(c)) {
+            alignment = STRETCH;
+            tooltip = 'Например: от 30 до 35 рабочих дней';
+        }
+    }
+}
+
+// панель форматирования описания — постоянно сверху поля
+onWebClientInit() + {
+    onWebClientInit('offerEditor.css') <- 6;
+}
+
+FORM leadCalculationOffer 'Коммерческое предложение'
+    OBJECTS c = LeadCalculation PANEL
+    PROPERTIES(c) READONLY offerRecipient, equipmentName, offerDescription, offerTerms, price, offerScheme
+;
+
+// окно с описанием и сроком; по OK — КП на печать (из просмотра сохраняется в PDF или Word)
+printOffer 'Сформировать КП' (LeadCalculation c) {
+    DIALOG leadCalculationOfferParams OBJECTS c = c DO
+        PRINT leadCalculationOffer OBJECTS c = c;
+}

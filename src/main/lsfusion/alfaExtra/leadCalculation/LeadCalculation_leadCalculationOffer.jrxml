@@ -1,0 +1,161 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Коммерческое предложение по расчёту заявки (форма LeadCalculation.leadCalculationOffer) по шаблону «ШАБЛОН КП.docx».
+     Логотип, печать и подпись — resources/alfaExtra/offer. -->
+<jasperReport xmlns="http://jasperreports.sourceforge.net/jasperreports" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://jasperreports.sourceforge.net/jasperreports http://jasperreports.sourceforge.net/xsd/jasperreport.xsd" name="LeadCalculationOffer" pageWidth="595" pageHeight="842" whenNoDataType="AllSectionsNoDetail" columnWidth="482" leftMargin="71" rightMargin="42" topMargin="40" bottomMargin="40">
+	<style name="Base" isDefault="true" fontName="DejaVu Serif" fontSize="11" pdfFontName="DejaVu Serif" pdfEncoding="Identity-H"/>
+	<style name="Small" style="Base" fontSize="9"/>
+	<style name="Text" style="Base">
+		<paragraph spacingAfter="6" firstLineIndent="28"/>
+	</style>
+	<field name="offerRecipient(c)" class="java.lang.String"/>
+	<field name="equipmentName(c)" class="java.lang.String"/>
+	<field name="offerDescription(c)" class="java.lang.String"/>
+	<field name="offerTerms(c)" class="java.lang.String"/>
+	<field name="price(c)" class="java.math.BigDecimal"/>
+	<field name="offerScheme(c)" class="java.io.InputStream"/>
+	<detail>
+		<!-- шапка: реквизиты и логотип -->
+		<band height="250" splitType="Prevent">
+			<image scaleImage="RetainShape" hAlign="Right" vAlign="Top" onErrorType="Blank">
+				<reportElement x="247" y="0" width="235" height="86"/>
+				<imageExpression><![CDATA["alfaExtra/offer/logo.png"]]></imageExpression>
+			</image>
+			<staticText>
+				<reportElement style="Small" x="0" y="0" width="240" height="120"/>
+				<textElement markup="styled"/>
+				<text><![CDATA[<style isBold="true" size="10">ОБЩЕСТВО С ОГРАНИЧЕННОЙ
+ОТВЕТСТВЕННОСТЬЮ
+«ТЕХНОПРОМ»</style>
+ИНН/КПП 2369007296 /236901001
+ОГРН 1192375058611
+Название банка: КБ «Кубань Кредит» ООО
+БИК банка: 040349722
+Корр. счёт: 30101810200000000722
+Расчётный счёт: 40702810200220000089]]></text>
+			</staticText>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Small" positionType="Float" x="0" y="124" width="482" height="118"/>
+				<textFieldExpression><![CDATA["Название компании: общество с ограниченной ответственностью «ТехноПром»\nАдрес: 352700, Россия, Краснодарский край, Тимашевский район, г. Тимашевск, ул. Ковалёва, д.79А\nДля корреспонденции: 352701, Краснодарский край, Тимашевский район, г. Тимашевск, ул. Котляра 26, а/я 141\nЭлектронные адреса:\nОТДЕЛ ПРОДАЖ (для запроса заявок) - zakaz@tehnoprom23.ru\nОТДЕЛ ЗАКУПОК (по вопросам сотрудничества и закупок) - komdir@tehnoprom23.ru / zakup1@tehnoprom23.ru\nБухгалтерия - buh@tehnoprom23.ru / glavbuh@tehnoprom23.ru\nАдминистрация - dir@tehnoprom23.ru / ar@tehnoprom23.ru\nWeb-страница: www.tehnoprom23.ru / www.montazh-zavodov.ru"]]></textFieldExpression>
+			</textField>
+			<line>
+				<reportElement positionType="Float" x="0" y="246" width="482" height="1"/>
+				<graphicElement>
+					<pen lineWidth="1.5"/>
+				</graphicElement>
+			</line>
+		</band>
+		<!-- кому, заголовок, вступление и описание оборудования -->
+		<band height="96" splitType="Stretch">
+			<textField textAdjust="StretchHeight" isBlankWhenNull="true">
+				<reportElement x="0" y="6" width="482" height="16"/>
+				<textElement textAlignment="Right"/>
+				<textFieldExpression><![CDATA[$F{offerRecipient(c)}]]></textFieldExpression>
+			</textField>
+			<staticText>
+				<reportElement positionType="Float" x="0" y="30" width="482" height="20"/>
+				<textElement textAlignment="Center">
+					<font size="14" isBold="true"/>
+				</textElement>
+				<text><![CDATA[Коммерческое предложение]]></text>
+			</staticText>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="56" width="482" height="16"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["В ответ на Ваш запрос об изготовлении " + ($F{equipmentName(c)} != null ? "«" + $F{equipmentName(c)} + "»" : "оборудования") + ", готовы предложить оборудование со следующими параметрами:"]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight" isBlankWhenNull="true">
+				<reportElement style="Base" positionType="Float" x="0" y="76" width="482" height="16"/>
+				<textElement textAlignment="Justified" markup="html"/>
+				<textFieldExpression><![CDATA[$F{offerDescription(c)} == null ? null : $F{offerDescription(c)}.replaceAll("<(/?)strong( [^>]*)?>", "<$1b>").replaceAll("<(/?)em( [^>]*)?>", "<$1i>")]]></textFieldExpression>
+			</textField>
+		</band>
+		<!-- эскиз оборудования -->
+		<band height="330" splitType="Prevent">
+			<printWhenExpression><![CDATA[$F{offerScheme(c)} != null]]></printWhenExpression>
+			<image scaleImage="RetainShape" hAlign="Center" vAlign="Middle" onErrorType="Blank">
+				<reportElement x="0" y="5" width="482" height="320"/>
+				<imageExpression><![CDATA[$F{offerScheme(c)}]]></imageExpression>
+			</image>
+		</band>
+		<!-- условия, цена и срок -->
+		<band height="232" splitType="Stretch">
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" x="0" y="6" width="482" height="30"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["Перед изготовлением разрабатывается 3D модель и чертежи оборудования, для согласования точного расположения патрубков, портов, люков и других врезок;"]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="40" width="482" height="44"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["Приемка оборудования и FAT испытания производятся на территории производителя, по адресу: г. Тимашевск, ул. Транспортная 61. (возможно проведение онлайн приемки оборудования с использованием видео связи)."]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="88" width="482" height="30"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["Доставка осуществляется на условиях самовывоза (возможна доставка за счет сил и средств производителя с привлечением наёмного транспорта)."]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="122" width="482" height="16"/>
+				<textElement textAlignment="Justified">
+					<font isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["Стоимость изготовления 1 (одной) единицы оборудования – " + ($F{price(c)} != null ? new java.text.DecimalFormat($F{price(c)}.stripTrailingZeros().scale() > 0 ? "#,##0.00" : "#,##0", java.text.DecimalFormatSymbols.getInstance(new java.util.Locale("ru"))).format($F{price(c)}) : "____") + " рублей, с учётом НДС 22%."]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="142" width="482" height="16"/>
+				<textElement textAlignment="Justified">
+					<font isBold="true"/>
+				</textElement>
+				<textFieldExpression><![CDATA["Срок изготовления 1 (одной) единицы оборудования составляет " + ($F{offerTerms(c)} != null ? $F{offerTerms(c)} : "____") + "."]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="162" width="482" height="30"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["Возможно одновременное изготовление от 3 до 6 единиц оборудования в зависимости от загруженности производства. График производства и поставки оборудования согласовывается при заключении договора."]]></textFieldExpression>
+			</textField>
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Text" positionType="Float" x="0" y="196" width="482" height="30"/>
+				<textElement textAlignment="Justified"/>
+				<textFieldExpression><![CDATA["Все сварные швы выполняются методом TIG, внутренняя поверхность, полированная Ra 0,4…0,63, внешняя поверхность шлифованная."]]></textFieldExpression>
+			</textField>
+		</band>
+		<!-- о производстве и подпись -->
+		<band height="210" splitType="Prevent">
+			<textField textAdjust="StretchHeight">
+				<reportElement style="Base" x="0" y="8" width="482" height="66"/>
+				<textFieldExpression><![CDATA["Познакомиться с нашим производством вы можете, посетив наше предприятие в любое удобное для вас время или посмотрев о нас в сети интернет:\nСсылка на презентационный ролик: https://youtu.be/FRN6Cd71Wyg\nСсылка на YouTube Канал: http://www.youtube.com/@Tehnoprom23\nСсылка Rutube канал: https://rutube.ru/channel/43125091/"]]></textFieldExpression>
+			</textField>
+			<image scaleImage="RetainShape" onErrorType="Blank">
+				<reportElement positionType="Float" x="243" y="82" width="115" height="115"/>
+				<imageExpression><![CDATA["alfaExtra/offer/stamp.png"]]></imageExpression>
+			</image>
+			<image scaleImage="RetainShape" onErrorType="Blank">
+				<reportElement positionType="Float" x="214" y="118" width="100" height="38"/>
+				<imageExpression><![CDATA["alfaExtra/offer/signature.png"]]></imageExpression>
+			</image>
+			<staticText>
+				<reportElement style="Base" positionType="Float" x="0" y="140" width="200" height="16"/>
+				<text><![CDATA[Директор ООО «ТехноПром»]]></text>
+			</staticText>
+			<staticText>
+				<reportElement style="Base" positionType="Float" x="205" y="140" width="130" height="16"/>
+				<textElement textAlignment="Center"/>
+				<text><![CDATA[______________________]]></text>
+			</staticText>
+			<staticText>
+				<reportElement style="Base" positionType="Float" x="372" y="140" width="110" height="16"/>
+				<textElement textAlignment="Right"/>
+				<text><![CDATA[А.Л. Шайко]]></text>
+			</staticText>
+		</band>
+	</detail>
+	<pageFooter>
+		<band height="16">
+			<textField>
+				<reportElement style="Small" x="0" y="0" width="482" height="14"/>
+				<textElement textAlignment="Center"/>
+				<textFieldExpression><![CDATA[$V{PAGE_NUMBER}]]></textFieldExpression>
+			</textField>
+		</band>
+	</pageFooter>
+</jasperReport>

@@ -1,0 +1,171 @@
+MODULE LeadCalculationLabor;
+
+REQUIRE LeadCalculation, Utils, NumericUtils;
+
+NAMESPACE LeadCalculation;
+
+// Трудоёмкость расчёта заявки по шаблону «ШАБЛОН_Материал+Работа+Заявка» (лист «Расчет МАТ+РАБ», блок «Расчёт работ»).
+// Общий блок для всех видов расчёта: проектирование, работы с часами по видам работ, ставки, налог, доставка,
+// итог расчёта с маржой и ценой для КП. Часы вводятся вручную.
+// Список работ нового расчёта заполняет модуль вида расчёта (fillOperations), к форме блок подключается метакодом.
+
+CLASS LeadCalculationWorkType 'Вид работ' {
+    cnc 'Заготовка ЧПУ',
+    assembly 'Сборка/сварка',
+    polishing 'Полировка',
+    turning 'Токарь/фрезер',
+    extra 'Доп. затраты'
+}
+
+index (LeadCalculationWorkType t) = CASE
+    WHEN t = LeadCalculationWorkType.cnc THEN 1
+    WHEN t = LeadCalculationWorkType.assembly THEN 2
+    WHEN t = LeadCalculationWorkType.polishing THEN 3
+    WHEN t = LeadCalculationWorkType.turning THEN 4
+    WHEN t = LeadCalculationWorkType.extra THEN 5;
+
+TABLE leadCalculationWorkType (LeadCalculationWorkType);
+TABLE leadCalculationCalcWorkType (LeadCalculation, LeadCalculationWorkType);
+
+// ---- ставки и параметры расчёта (по умолчанию берутся из настроек при создании расчёта)
+rate 'Ставка, ₽/ч' = DATA NUMERIC[10,2] (LeadCalculation, LeadCalculationWorkType) TABLE leadCalculationCalcWorkType;
+people 'Людей в среднем' = DATA INTEGER (LeadCalculation, LeadCalculationWorkType) TABLE leadCalculationCalcWorkType;
+
+designHours 'Проектирование, чел.-ч' = DATA NUMERIC[10,2] (LeadCalculation) TABLE leadCalculation;
+designRate 'Ставка проектирования, ₽/ч' = DATA NUMERIC[10,2] (LeadCalculation) TABLE leadCalculation;
+designPeople 'Проектировщиков' = DATA INTEGER (LeadCalculation) TABLE leadCalculation;
+shiftHours 'Смена, ч' = DATA NUMERIC[5,2] (LeadCalculation) TABLE leadCalculation;
+consumablesRate 'Расходник, ₽/ч' = DATA NUMERIC[10,2] (LeadCalculation) TABLE leadCalculation;
+taxPercent 'Налог, %' = DATA NUMERIC[5,2] (LeadCalculation) TABLE leadCalculation;
+transportSum 'Транспорт и перевозки, ₽' = DATA NUMERIC[16,2] (LeadCalculation) TABLE leadCalculation;
+margin 'Желаемая маржа, ₽' = DATA NUMERIC[16,2] (LeadCalculation) TABLE leadCalculation;
+
+// ---- работы расчёта: часы по видам работ
+CLASS LeadCalculationOperation 'Работа расчёта';
+TABLE leadCalculationOperation (LeadCalculationOperation);
+TABLE leadCalculationOperationWorkType (LeadCalculationOperation, LeadCalculationWorkType);
+
+calculation = DATA LeadCalculation (LeadCalculationOperation) NONULL DELETE INDEXED;
+index '№' = DATA INTEGER (LeadCalculationOperation);
+name 'Работа' = DATA ISTRING[200] (LeadCalculationOperation) CHARWIDTH 28;
+hours 'Часы' = DATA NUMERIC[10,2] (LeadCalculationOperation, LeadCalculationWorkType) TABLE leadCalculationOperationWorkType;
+hours 'Всего, ч' (LeadCalculationOperation o) = GROUP SUM hours(o, LeadCalculationWorkType t);
+
+// новая работа встаёт в конец списка
+WHEN LOCAL SET(LeadCalculationOperation o IS LeadCalculationOperation) AND NOT CHANGED(index(o)) DO
+    index(o) <- (GROUP MAX index(LeadCalculationOperation p) IF calculation(p) = calculation(o)) (+) 1;
+
+// работа выключенного узла (например, рубашки) не показывается и не считается; задаёт модуль вида расчёта
+hidden = ABSTRACT BOOLEAN (LeadCalculationOperation);
+
+countOperations (LeadCalculation c) = GROUP SUM 1 IF calculation(LeadCalculationOperation o) = c;
+
+// ---- итоги по видам работ
+hours 'Часов' (LeadCalculation c, LeadCalculationWorkType t) =
+    GROUP SUM hours(LeadCalculationOperation o, t) IF calculation(o) = c AND NOT hidden(o);
+cost 'Стоимость, ₽' (LeadCalculation c, LeadCalculationWorkType t) = NUMERIC[16,2](hours(c, t) * rate(c, t));
+days 'Дней' (LeadCalculation c, LeadCalculationWorkType t) = NUMERIC[8,2](hours(c, t) / shiftHours(c) / people(c, t));
+
+designCost 'Стоимость проектирования, ₽' (LeadCalculation c) = NUMERIC[16,2](designHours(c) * designRate(c));
+designDays 'Дней проектирования' (LeadCalculation c) = NUMERIC[8,2](designHours(c) / shiftHours(c) / designPeople(c));
+
+// ---- итог работ: (ФОТ + расходник на все часы изготовления) × (1 + налог) + транспорт
+laborHours 'Всего часов изготовления' (LeadCalculation c) = GROUP SUM hours(c, LeadCalculationWorkType t);
+productionDays 'Дней изготовления' (LeadCalculation c) = INTEGER(ceil(GROUP SUM days(c, LeadCalculationWorkType t)));
+payroll 'ФОТ, ₽' (LeadCalculation c) = (GROUP SUM cost(c, LeadCalculationWorkType t)) (+) designCost(c);
+consumablesSum 'Расходники, ₽' (LeadCalculation c) = NUMERIC[16,2](laborHours(c) * consumablesRate(c));
+taxSum 'Налог, ₽' (LeadCalculation c) = NUMERIC[16,2]((payroll(c) (+) consumablesSum(c)) * taxPercent(c) / 100);
+laborSum 'Итого работы, ₽' (LeadCalculation c) = payroll(c) (+) consumablesSum(c) (+) taxSum(c) (+) transportSum(c);
+
+// ---- итог расчёта
+totalCost 'Себестоимость, ₽' (LeadCalculation c) = materialsSum(c) (+) laborSum(c);
+price 'Цена для КП, ₽' (LeadCalculation c) = totalCost(c) (+) margin(c);
+marginPercent 'Маржа, %' (LeadCalculation c) = NUMERIC[8,2](margin(c) * 100 / totalCost(c));
+marginPerHour 'Маржа на чел.-час, ₽' (LeadCalculation c) = NUMERIC[14,2](margin(c) / laborHours(c));
+
+// ---- значения по умолчанию для новых расчётов (Настройки CRM)
+defaultRate 'Ставка, ₽/ч' = DATA NUMERIC[10,2] (LeadCalculationWorkType) TABLE leadCalculationWorkType;
+defaultPeople 'Людей в среднем' = DATA INTEGER (LeadCalculationWorkType) TABLE leadCalculationWorkType;
+defaultDesignRate 'Ставка проектирования, ₽/ч' = DATA NUMERIC[10,2] ();
+defaultDesignPeople 'Проектировщиков' = DATA INTEGER ();
+defaultShiftHours 'Смена, ч' = DATA NUMERIC[5,2] ();
+defaultConsumablesRate 'Расходник, ₽/ч' = DATA NUMERIC[10,2] ();
+defaultTaxPercent 'Налог, %' = DATA NUMERIC[5,2] ();
+
+// список работ по методике вида расчёта
+fillOperations ABSTRACT LIST (LeadCalculation);
+
+// ставки из настроек (только пустые) и, если работ ещё нет, список работ по методике
+fillLabor 'Заполнить работы по шаблону' (LeadCalculation c) {
+    rate(c, LeadCalculationWorkType t) <- defaultRate(t) WHERE NOT rate(c, t);
+    people(c, LeadCalculationWorkType t) <- defaultPeople(t) WHERE NOT people(c, t);
+    designRate(c) <- defaultDesignRate() WHERE NOT designRate(c);
+    designPeople(c) <- defaultDesignPeople() WHERE NOT designPeople(c);
+    shiftHours(c) <- defaultShiftHours() WHERE NOT shiftHours(c);
+    consumablesRate(c) <- defaultConsumablesRate() WHERE NOT consumablesRate(c);
+    taxPercent(c) <- defaultTaxPercent() WHERE NOT taxPercent(c);
+    IF NOT countOperations(c) THEN fillOperations(c);
+}
+
+WHEN LOCAL SET(LeadCalculation c IS LeadCalculation) DO fillLabor(c);
+
+EXTEND FORM CRM.options
+    PROPERTIES() defaultDesignRate, defaultDesignPeople, defaultShiftHours, defaultConsumablesRate, defaultTaxPercent
+    OBJECTS dwt = LeadCalculationWorkType
+    PROPERTIES(dwt) READONLY caption, index
+    PROPERTIES(dwt) defaultRate, defaultPeople
+    ORDERS index(dwt)
+;
+
+DESIGN CRM.options {
+    commons {
+        NEW leadCalculationLaborDefaults {
+            caption = 'Расчёт работ: значения по умолчанию';
+            MOVE PROPERTY(defaultDesignRate());
+            MOVE PROPERTY(defaultDesignPeople());
+            MOVE PROPERTY(defaultShiftHours());
+            MOVE PROPERTY(defaultConsumablesRate());
+            MOVE PROPERTY(defaultTaxPercent());
+            MOVE BOX(dwt) {
+                caption = 'Виды работ';
+                PROPERTY(caption(dwt)) { caption = 'Вид работ'; }
+                PROPERTY(index(dwt)) { hide = TRUE; }
+            }
+            REMOVE TOOLBARSYSTEM(dwt);
+        }
+    }
+}
+
+// блок «Работы» для формы вида расчёта: объекты wt (виды работ) и op (работы), их BOX и свойства форма размещает сама
+META defineLeadCalculationLabor(form, object)
+    EXTEND FORM form
+        PROPERTIES(object) fillLabor SHOWIF NOT countOperations(object),
+                           designHours, designRate, designPeople, shiftHours, consumablesRate, taxPercent, transportSum, margin
+        PROPERTIES(object) READONLY BACKGROUND #E3EEF8 designCost, designDays, laborHours, productionDays,
+                                                     payroll, consumablesSum, taxSum, laborSum,
+                                                     totalCost, price, marginPercent, marginPerHour
+
+        OBJECTS wt = LeadCalculationWorkType
+        PROPERTIES(wt) READONLY caption, index
+        PROPERTIES(object, wt) rate, people
+        PROPERTIES(object, wt) READONLY BACKGROUND #E3EEF8 hours, cost, days
+        ORDERS index(wt)
+
+        OBJECTS op = LeadCalculationOperation
+        PROPERTIES(op) index, name
+        PROPERTIES(op, wt) hours COLUMNS (wt) HEADER caption(wt)
+        PROPERTIES(op) READONLY BACKGROUND #E3EEF8 hours
+        PROPERTIES(op) NEW, DELETE
+        FILTERS calculation(op) = object, NOT hidden(op)
+        ORDERS index(op)
+    ;
+END
+
+// расчёты в карточке лида и в списке: работы и цена
+EXTEND FORM lead
+    PROPERTIES(lc) READONLY laborSum, price
+;
+
+EXTEND FORM leadCalculations
+    PROPERTIES(c) READONLY laborSum, price
+;

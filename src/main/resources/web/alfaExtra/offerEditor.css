@@ -1,0 +1,42 @@
+/* Окно «Коммерческое предложение»: панель форматирования описания всегда видна сверху поля,
+   а не всплывает при выделении текста (стандартный редактор RICHTEXT показывает её только над выделением). */
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-tooltip {
+    display: block !important;
+    position: absolute;
+    top: 0 !important;
+    left: 0 !important;
+    right: 0;
+    width: auto !important;
+    transform: none !important;
+    margin: 0;
+    border-radius: 0;
+    border-bottom: 1px solid #ccc;
+    background: #f3f3f3;
+    z-index: 2;
+}
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-tooltip-arrow {
+    display: none;
+}
+/* кнопки на светлом фоне — тёмные */
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar .ql-stroke {
+    stroke: #444;
+}
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar .ql-fill {
+    fill: #444;
+}
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar .ql-picker,
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar .ql-picker-label {
+    color: #444;
+}
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar button:hover .ql-stroke,
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar button.ql-active .ql-stroke {
+    stroke: #06c;
+}
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar button:hover .ql-fill,
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-toolbar button.ql-active .ql-fill {
+    fill: #06c;
+}
+/* текст начинается под панелью */
+[lsfusion-form="LeadCalculation.leadCalculationOfferParams"] .ql-bubble .ql-editor {
+    padding-top: 48px;
+}

@@ -1,0 +1,506 @@
+MODULE LeadCalculationVerticalTankForm;
+
+REQUIRE LeadCalculationVerticalTankMaterials, LeadCalculationVerticalTankLabor, LeadCalculationOffer;
+
+NAMESPACE LeadCalculation;
+
+// Форма расчёта вертикальной ёмкости: параметры, расчёт узлов, эскиз, материалы и работы.
+
+// ---- эскиз ёмкости: рисует компонент TankScheme (web/alfaExtra/tankScheme.js) по размерам из формы,
+// так же, как «Калькулятор резервуаров ВЦР»
+schemeTopHeight (VerticalTankCalculation c) = coneHeight(c, TankCone.top) + 25;
+schemeApexTop (VerticalTankCalculation c) = apexDiameter(c, TankCone.top);
+schemeApexBottom (VerticalTankCalculation c) = apexDiameter(c, TankCone.bottom);
+schemeInsulation (VerticalTankCalculation c) = insulationThickness(c) IF hasInsulation(c);
+// изоляция и облицовка по зонам
+schemeInsTop (VerticalTankCalculation c) = insulated(c, TankZone.top);
+schemeInsShell (VerticalTankCalculation c) = insulated(c, TankZone.shell);
+schemeInsBottom (VerticalTankCalculation c) = insulated(c, TankZone.bottom);
+schemeCladTop (VerticalTankCalculation c) = clad(c, TankZone.top);
+schemeCladShell (VerticalTankCalculation c) = clad(c, TankZone.shell);
+schemeCladBottom (VerticalTankCalculation c) = clad(c, TankZone.bottom);
+schemeBelts (VerticalTankCalculation c) = jacketBelts(c) IF hasJacketShell(c);
+schemeBeltHeight (VerticalTankCalculation c) = IF isStrips(c) THEN stripBeltHeight(c) ELSE jacketBeltHeight(c);
+schemeSeam (VerticalTankCalculation c) = ringHeight(c, TankShell.shell);
+
+onWebClientInit() + {
+    onWebClientInit('tankScheme.js') <- 5;
+}
+
+// ---- настройки: значения по умолчанию для новых расчётов
+EXTEND FORM CRM.options
+    PROPERTIES() defaultSteelGrade, defaultSteelPrice, defaultLegPipePrice, defaultLegPrice, defaultBracingPrice,
+                 defaultCladPrice, defaultInsulationPrice
+;
+
+DESIGN CRM.options {
+    commons {
+        NEW verticalTankDefaults {
+            caption = 'Расчёт вертикальной ёмкости: значения по умолчанию';
+            MOVE PROPERTY(defaultSteelGrade());
+            MOVE PROPERTY(defaultSteelPrice());
+            MOVE PROPERTY(defaultLegPipePrice());
+            MOVE PROPERTY(defaultLegPrice());
+            MOVE PROPERTY(defaultBracingPrice());
+            MOVE PROPERTY(defaultCladPrice());
+            MOVE PROPERTY(defaultInsulationPrice());
+        }
+    }
+}
+
+// ---- форма расчёта
+captionFormat 'Формат металла' (VerticalTankCalculation c, TankShell s) = caption(format(c, s));
+
+FORM verticalTankCalculation 'Расчёт вертикальной цилиндрической ёмкости'
+    OBJECTS c = VerticalTankCalculation PANEL
+    PROPERTIES(c) READONLY nameLead, number
+    PROPERTIES(c) deleteCalculation
+    PROPERTIES(c) dateTime, name, equipmentName, nameExecutor, captionStatus SELECT 'buttonGroup',
+                  diameter, height, floorHeight, workingPercent,
+                  steelGrade, captionSurface, captionConeFormat, captionShellFormat, shellThickness, subtractScrap,
+                  legCount, captionLegType, legWall, legProtrude, legAdjustable, bracingPipe,
+                  captionJacketShellType, captionJacketConeType, jacketGrade,
+                  jacketBelts, jacketOffset, jacketConeHeight,
+                  captionInsulationType, insulationThickness, insulationLayers,
+                  cladThickness, cladGrade, captionCladSurface, captionCladFormat, cladSubtractScrap,
+                  steelPrice, cladPrice, legPipePrice, legPrice, bracingPrice, insulationPrice
+    // рассчитанные значения выделены фоном, поля ввода остаются белыми
+    PROPERTIES(c) READONLY BACKGROUND #E3EEF8 legLength, legPipeLength, legsWeight, bracingLength,
+                           jacketBeltLength, jacketConeMax, jacketArea, jacketWeight,
+                           insulationLayer, insulationBuy, cladWeight,
+                           shellRatio, liquidRatio, totalHeight, diagonal,
+                           totalVolume, workingVolume, lowerVolume, liquidHeight, totalWeight,
+                           autoMaterialsSum, manualMaterialsSum, materialsSum
+    // толщина листа нужна пукле; у штрипса толщина задаётся профилем
+    PROPERTIES(c) jacketThickness SHOWIF NOT (isStrips(c) AND NOT hasJacketCone(c)),
+                  jacketBeltHeight SHOWIF NOT isStrips(c),
+                  captionStripProfile SHOWIF isStrips(c), stripTurns SHOWIF isStrips(c), stripPitch SHOWIF isStrips(c)
+    PROPERTIES(c) READONLY BACKGROUND #E3EEF8 stripDevelopedWidth SHOWIF isStrips(c), stripBeltHeight SHOWIF isStrips(c),
+                  stripTurnLength SHOWIF isStrips(c), stripWeight SHOWIF isStrips(c)
+    PROPERTIES(c) READONLY warning SHOWIF warning(c)
+    PROPERTIES(c) READONLY sDiameter = diameter, sHeight = height, sFloor = floorHeight,
+                           sBottom = bottomConeFullHeight, sTop = schemeTopHeight,
+                           sApexTop = schemeApexTop, sApexBottom = schemeApexBottom,
+                           sInsulation = schemeInsulation,
+                           sInsTop = schemeInsTop, sInsShell = schemeInsShell, sInsBottom = schemeInsBottom,
+                           sCladTop = schemeCladTop, sCladShell = schemeCladShell, sCladBottom = schemeCladBottom,
+                           sPyramidal = legPyramidal, sLegDiameter = legDiameter, sProtrude = legProtrude,
+                           sLiquid = liquidHeight, sWork = workingVolume, sTotal = totalHeight,
+                           sBelts = schemeBelts, sBeltHeight = schemeBeltHeight, sSeam = schemeSeam,
+                           sJacketArea = jacketArea
+
+    // верхний и нижний конус — полями, каждый своим объектом
+    OBJECTS kt = TankCone PANEL
+    PROPERTIES(c, kt) thickness, angle, apexDiameter
+    PROPERTIES(c, kt) READONLY BACKGROUND #E3EEF8 fullHeight, weight, blankSize, blankWeight
+    FILTERS kt = TankCone.top
+
+    OBJECTS kb = TankCone PANEL
+    PROPERTIES(c, kb) thickness, angle, apexDiameter
+    PROPERTIES(c, kb) READONLY BACKGROUND #E3EEF8 fullHeight, weight, blankSize, blankWeight
+    FILTERS kb = TankCone.bottom
+
+    OBJECTS z = TankZone
+    PROPERTIES(z) READONLY caption
+    PROPERTIES(c, z) insulated, clad
+
+    // облицовка верхнего и нижнего конуса — полями
+    OBJECTS kct = TankCone PANEL
+    PROPERTIES(c, kct) READONLY BACKGROUND #E3EEF8 weight, blankSize, blankWeight
+    FILTERS kct = TankCone.cladTop
+
+    OBJECTS kcb = TankCone PANEL
+    PROPERTIES(c, kcb) READONLY BACKGROUND #E3EEF8 weight, blankSize, blankWeight
+    FILTERS kcb = TankCone.cladBottom
+
+    // раскрой колбы и облицовки колбы — полями на своих вкладках
+    OBJECTS sh = TankShell PANEL
+    PROPERTIES(c, sh) READONLY BACKGROUND #E3EEF8 fullRings, ringLength, lastRingBlank, weight, scrapWeight, blankWeight, rollLength, sheets
+    FILTERS sh = TankShell.shell
+
+    OBJECTS scl = TankShell PANEL
+    PROPERTIES(c, scl) READONLY BACKGROUND #E3EEF8 fullRings, ringLength, lastRingBlank, weight, scrapWeight, blankWeight, rollLength, sheets
+    FILTERS scl = TankShell.cladShell, shellThickness(c, scl)
+
+    OBJECTS p = TankPart
+    PROPERTIES(p) READONLY index
+    PROPERTIES(c, p) READONLY name, lineQuantity
+    PROPERTIES(p) READONLY uom
+    PROPERTIES(c, p) READONLY price, lineSum, purpose
+    FILTERS isLine(c, p)
+    ORDERS index(p)
+
+    EDIT VerticalTankCalculation OBJECT c
+;
+
+@defineLeadCalculationMaterials(verticalTankCalculation, c);
+@defineLeadCalculationLabor(verticalTankCalculation, c);
+
+// КП: эскиз снимается с экрана формы и печатается вместе с КП
+createOffer 'Сформировать КП' (VerticalTankCalculation c) {
+    LOCAL scheme = IMAGEFILE ();
+    SCREENSHOT schemeBox TO scheme;
+    offerScheme(c) <- scheme();
+    printOffer(c);
+}
+
+EXTEND FORM verticalTankCalculation
+    PROPERTIES(c) createOffer
+;
+
+DESIGN verticalTankCalculation {
+    OBJECTS {
+        NEW header {
+            horizontal = TRUE;
+            alignment = STRETCH;
+            MOVE PROPERTY(nameLead(c));
+            MOVE PROPERTY(number(c));
+            MOVE PROPERTY(dateTime(c));
+            MOVE PROPERTY(name(c)) { flex = 1; }
+            MOVE PROPERTY(equipmentName(c)) { flex = 1; }
+            MOVE PROPERTY(nameExecutor(c));
+            MOVE PROPERTY(captionStatus(c));
+            MOVE PROPERTY(deleteCalculation(c));
+        }
+        MOVE PROPERTY(warning(c)) { foreground = #C62828; alignment = STRETCH; }
+        // слева: все разделы параметров в один ряд, под ними материалы; справа: эскиз и ёмкость в целом
+        NEW body {
+            horizontal = TRUE;
+            wrap = FALSE;
+            alignment = STRETCH;
+            fill = 1;
+            NEW leftColumn {
+                fill = 1;
+                width = 0;
+                NEW params {
+                    horizontal = TRUE;
+                    wrap = FALSE;
+                    alignment = STRETCH;
+                    NEW bodyLeft {
+                        alignment = STRETCH;
+                        NEW general {
+                            caption = 'Размеры';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(diameter(c)) { charWidth = 7; }
+                            MOVE PROPERTY(height(c)) { charWidth = 7; }
+                            MOVE PROPERTY(floorHeight(c)) { charWidth = 7; }
+                            MOVE PROPERTY(workingPercent(c)) { charWidth = 7; }
+                        }
+                        NEW metal {
+                            caption = 'Металл';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(steelGrade(c)) { charWidth = 9; }
+                            MOVE PROPERTY(captionSurface(c)) { select = 'dropdown'; charWidth = 9; }
+                            MOVE PROPERTY(captionConeFormat(c)) { select = 'dropdown'; charWidth = 13; }
+                        }
+                        NEW shellParams {
+                            caption = 'Колба';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(captionShellFormat(c)) { caption = 'Формат колбы'; select = 'dropdown'; charWidth = 13; }
+                            MOVE PROPERTY(shellThickness(c)) { charWidth = 7; }
+                            MOVE PROPERTY(subtractScrap(c)) { caption = 'Вычесть обрезки из стоимости'; }
+                        }
+                    }
+                    NEW cones {
+                        caption = 'Конусы';
+                        horizontal = TRUE;
+                        wrap = FALSE;
+                        alignment = STRETCH;
+                        NEW topCone {
+                            caption = 'Верхний';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(thickness(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(angle(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(apexDiameter(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(fullHeight(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(weight(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(blankSize(c, kt)) { charWidth = 6; }
+                            MOVE PROPERTY(blankWeight(c, kt)) { charWidth = 6; }
+                        }
+                        NEW bottomCone {
+                            caption = 'Нижний';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(thickness(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(angle(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(apexDiameter(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(fullHeight(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(weight(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(blankSize(c, kb)) { caption = ''; charWidth = 6; }
+                            MOVE PROPERTY(blankWeight(c, kb)) { caption = ''; charWidth = 6; }
+                        }
+                    }
+                    NEW shellCut {
+                        caption = 'Раскрой колбы';
+                        alignment = STRETCH;
+                        MOVE PROPERTY(fullRings(c, sh)) { caption = 'Целых обечаек'; charWidth = 9; }
+                        MOVE PROPERTY(ringLength(c, sh)) { caption = 'Длина обечайки, мм'; charWidth = 9; }
+                        MOVE PROPERTY(lastRingBlank(c, sh)) { caption = 'Последняя обечайка, мм'; charWidth = 9; }
+                        MOVE PROPERTY(weight(c, sh)) { caption = 'Вес готового, кг'; charWidth = 9; }
+                        MOVE PROPERTY(scrapWeight(c, sh)) { caption = 'Вес обрезка, кг'; charWidth = 9; }
+                        MOVE PROPERTY(blankWeight(c, sh)) { caption = 'Вес заготовки, кг'; charWidth = 9; }
+                        MOVE PROPERTY(rollLength(c, sh)) { caption = 'Отмотано, м'; charWidth = 9; }
+                        MOVE PROPERTY(sheets(c, sh)) { caption = 'Листов, шт'; charWidth = 9; }
+                    }
+                    NEW legsSection {
+                        caption = 'Ноги';
+                        alignment = STRETCH;
+                        MOVE PROPERTY(legCount(c)) { charWidth = 7; }
+                        MOVE PROPERTY(captionLegType(c)) { select = 'dropdown'; charWidth = 9; }
+                        MOVE PROPERTY(legWall(c)) { caption = 'Стенка ноги, мм'; charWidth = 7; }
+                        MOVE PROPERTY(legProtrude(c)) { caption = 'Выступ ног, мм'; charWidth = 7; }
+                        MOVE PROPERTY(legAdjustable(c));
+                        MOVE PROPERTY(bracingPipe(c)) { charWidth = 7; }
+                        MOVE PROPERTY(legLength(c)) { charWidth = 7; }
+                        MOVE PROPERTY(legPipeLength(c)) { caption = 'Труба на ноги, м'; charWidth = 7; }
+                        MOVE PROPERTY(legsWeight(c)) { charWidth = 7; }
+                        MOVE PROPERTY(bracingLength(c)) { charWidth = 7; }
+                    }
+                    NEW jacketSection {
+                        caption = 'Рубашка';
+                        alignment = STRETCH;
+                        MOVE PROPERTY(captionJacketShellType(c)) { caption = 'По колбе'; select = 'dropdown'; charWidth = 8; }
+                        MOVE PROPERTY(captionJacketConeType(c)) { caption = 'По нижнему конусу'; select = 'dropdown'; charWidth = 8; }
+                        MOVE PROPERTY(jacketThickness(c)) { caption = 'Толщина, мм'; charWidth = 7; }
+                        MOVE PROPERTY(jacketGrade(c)) { caption = 'Марка стали'; charWidth = 7; }
+                        MOVE PROPERTY(captionStripProfile(c)) { select = 'dropdown'; charWidth = 13; }
+                        MOVE PROPERTY(jacketBeltHeight(c)) { caption = 'Высота пояса, мм'; charWidth = 7; }
+                        MOVE PROPERTY(jacketBelts(c)) { caption = 'Количество поясов'; charWidth = 7; }
+                        MOVE PROPERTY(stripTurns(c)) { charWidth = 7; }
+                        MOVE PROPERTY(stripPitch(c)) { charWidth = 7; }
+                        MOVE PROPERTY(jacketOffset(c)) { charWidth = 7; }
+                        MOVE PROPERTY(jacketConeHeight(c)) { caption = 'Высота на конусе, мм'; charWidth = 7; }
+                        MOVE PROPERTY(stripDevelopedWidth(c)) { charWidth = 7; }
+                        MOVE PROPERTY(stripBeltHeight(c)) { caption = 'Высота пояса, мм'; charWidth = 7; }
+                        MOVE PROPERTY(stripTurnLength(c)) { charWidth = 7; }
+                        MOVE PROPERTY(jacketBeltLength(c)) { caption = 'Длина пояса, мм'; charWidth = 7; }
+                        MOVE PROPERTY(jacketConeMax(c)) { caption = 'Макс. высота на конусе, мм'; charWidth = 7; }
+                        MOVE PROPERTY(jacketArea(c)) { caption = 'Площадь рубашек, м²'; charWidth = 7; }
+                        MOVE PROPERTY(stripWeight(c)) { charWidth = 7; }
+                        MOVE PROPERTY(jacketWeight(c)) { caption = 'Вес (+5%), кг'; charWidth = 7; }
+                    }
+                    NEW coverSection {
+                        caption = 'Изоляция и облицовка';
+                        alignment = STRETCH;
+                        horizontal = TRUE;
+                        wrap = FALSE;
+                        NEW coverLeft {
+                        MOVE BOX(z) {
+                            caption = 'Где';
+                            PROPERTY(caption(z)) { caption = 'Зона'; charWidth = 12; }
+                            PROPERTY(insulated(c, z)) { caption = 'Изол.'; charWidth = 5; }
+                            PROPERTY(clad(c, z)) { caption = 'Облиц.'; charWidth = 5; }
+                            GRID(z) { lineHeight = 3; }
+                        }
+                        REMOVE TOOLBARSYSTEM(z);
+                        NEW insulationParams {
+                            caption = 'Изоляция';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(captionInsulationType(c)) { caption = 'Тип'; select = 'dropdown'; charWidth = 12; }
+                            MOVE PROPERTY(insulationThickness(c)) { caption = 'Толщина, мм'; charWidth = 7; }
+                            MOVE PROPERTY(insulationLayers(c)) { charWidth = 7; }
+                            MOVE PROPERTY(insulationLayer(c)) { charWidth = 7; }
+                            MOVE PROPERTY(insulationBuy(c)) { charWidth = 7; }
+                        }
+                        NEW cladParams {
+                            caption = 'Облицовка';
+                            alignment = STRETCH;
+                            MOVE PROPERTY(cladThickness(c)) { caption = 'Толщина, мм'; charWidth = 8; }
+                            MOVE PROPERTY(cladGrade(c)) { caption = 'Марка стали'; charWidth = 8; }
+                            MOVE PROPERTY(captionCladSurface(c)) { caption = 'Поверхность'; select = 'dropdown'; charWidth = 8; }
+                            MOVE PROPERTY(captionCladFormat(c)) { caption = 'Формат'; select = 'dropdown'; charWidth = 12; }
+                            MOVE PROPERTY(cladSubtractScrap(c)) { caption = 'Вычесть обрезки'; }
+                            MOVE PROPERTY(cladWeight(c)) { charWidth = 7; }
+                        }
+                        }
+                        NEW coverRight {
+                        NEW cladTopCone {
+                            caption = 'Облицовка верхнего конуса';
+                            alignment = STRETCH;
+                            showIf = clad(c, TankZone.top);
+                            MOVE PROPERTY(weight(c, kct)) { charWidth = 7; }
+                            MOVE PROPERTY(blankSize(c, kct)) { charWidth = 7; }
+                            MOVE PROPERTY(blankWeight(c, kct)) { charWidth = 7; }
+                        }
+                        NEW cladBottomCone {
+                            caption = 'Облицовка нижнего конуса';
+                            alignment = STRETCH;
+                            showIf = clad(c, TankZone.bottom);
+                            MOVE PROPERTY(weight(c, kcb)) { charWidth = 7; }
+                            MOVE PROPERTY(blankSize(c, kcb)) { charWidth = 7; }
+                            MOVE PROPERTY(blankWeight(c, kcb)) { charWidth = 7; }
+                        }
+                        NEW cladCut {
+                            caption = 'Раскрой облицовки колбы';
+                            alignment = STRETCH;
+                            showIf = clad(c, TankZone.shell);
+                            MOVE PROPERTY(fullRings(c, scl)) { caption = 'Целых обечаек'; charWidth = 9; }
+                            MOVE PROPERTY(ringLength(c, scl)) { caption = 'Длина обечайки, мм'; charWidth = 9; }
+                            MOVE PROPERTY(lastRingBlank(c, scl)) { caption = 'Последняя обечайка, мм'; charWidth = 9; }
+                            MOVE PROPERTY(weight(c, scl)) { caption = 'Вес готового, кг'; charWidth = 9; }
+                            MOVE PROPERTY(scrapWeight(c, scl)) { caption = 'Вес обрезка, кг'; charWidth = 9; }
+                            MOVE PROPERTY(blankWeight(c, scl)) { caption = 'Вес заготовки, кг'; charWidth = 9; }
+                            MOVE PROPERTY(rollLength(c, scl)) { caption = 'Отмотано, м'; charWidth = 9; }
+                            MOVE PROPERTY(sheets(c, scl)) { caption = 'Листов, шт'; charWidth = 9; }
+                        }
+                        }
+                    }
+                    NEW pricesSection {
+                        caption = 'Цены';
+                        alignment = STRETCH;
+                        width = 200;
+                        MOVE PROPERTY(steelPrice(c)) { caption = 'Сталь корпуса, ₽/кг'; charWidth = 7; }
+                        MOVE PROPERTY(cladPrice(c)) { caption = 'Сталь облицовки, ₽/кг'; charWidth = 7; }
+                        MOVE PROPERTY(legPipePrice(c)) { caption = 'Труба ног, ₽/м'; charWidth = 7; }
+                        MOVE PROPERTY(legPrice(c)) { caption = 'Опора ноги, ₽/шт'; charWidth = 7; }
+                        MOVE PROPERTY(bracingPrice(c)) { caption = 'Расшивка ног, ₽/м'; charWidth = 7; }
+                        MOVE PROPERTY(insulationPrice(c)) { caption = 'Изоляция, ₽/м²'; charWidth = 7; }
+                    }
+                }
+                // под разделами: материалы и работы рядом
+                NEW costPane {
+                    horizontal = TRUE;
+                    wrap = FALSE;
+                    fill = 1;
+                    alignment = STRETCH;
+                NEW materialsPane {
+                    fill = 1;
+                    width = 0;
+                    alignment = STRETCH;
+                    NEW materials {
+                        tabbed = TRUE;
+                        fill = 1;
+                        alignment = STRETCH;
+                        MOVE BOX(p) {
+                            caption = 'Материалы по методике';
+                            PROPERTY(index(p)) { hide = TRUE; }
+                        }
+                        MOVE BOX(mm) { caption = 'Комплектация и прочие материалы'; }
+                    }
+                    NEW totals {
+                        horizontal = TRUE;
+                        MOVE PROPERTY(autoMaterialsSum(c));
+                        MOVE PROPERTY(manualMaterialsSum(c));
+                        MOVE PROPERTY(materialsSum(c)) { fontSize = 14; }
+                    }
+                }
+                NEW laborPane {
+                    fill = 1;
+                    width = 0;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(fillLabor(c));
+                    MOVE BOX(op) {
+                        caption = 'Работы, чел.-ч';
+                        fill = 1;
+                        PROPERTY(index(op)) { charWidth = 3; }
+                    }
+                    NEW laborParams {
+                        horizontal = TRUE;
+                        wrap = FALSE;
+                        alignment = STRETCH;
+                        MOVE BOX(wt) {
+                            caption = 'Виды работ';
+                            fill = 1;
+                            PROPERTY(index(wt)) { hide = TRUE; }
+                            PROPERTY(caption(wt)) { caption = 'Вид работ'; charWidth = 12; }
+                            PROPERTY(rate(c, wt)) { charWidth = 6; }
+                            PROPERTY(people(c, wt)) { caption = 'Людей'; charWidth = 4; }
+                            PROPERTY(hours(c, wt)) { charWidth = 5; }
+                            PROPERTY(cost(c, wt)) { charWidth = 8; }
+                            PROPERTY(days(c, wt)) { charWidth = 5; }
+                        }
+                        REMOVE TOOLBARSYSTEM(wt);
+                        NEW designSection {
+                            caption = 'Проектирование';
+                            MOVE PROPERTY(designHours(c)) { caption = 'Часов'; charWidth = 6; }
+                            MOVE PROPERTY(designRate(c)) { caption = 'Ставка, ₽/ч'; charWidth = 6; }
+                            MOVE PROPERTY(designPeople(c)) { caption = 'Людей'; charWidth = 6; }
+                            MOVE PROPERTY(designCost(c)) { caption = 'Стоимость, ₽'; charWidth = 8; }
+                            MOVE PROPERTY(designDays(c)) { caption = 'Дней'; charWidth = 6; }
+                        }
+                        NEW laborCommon {
+                            caption = 'Общие';
+                            MOVE PROPERTY(shiftHours(c)) { charWidth = 6; }
+                            MOVE PROPERTY(consumablesRate(c)) { charWidth = 6; }
+                            MOVE PROPERTY(taxPercent(c)) { charWidth = 6; }
+                            MOVE PROPERTY(transportSum(c)) { caption = 'Транспорт, ₽'; charWidth = 8; }
+                        }
+                    }
+                    NEW laborTotals {
+                        horizontal = TRUE;
+                        MOVE PROPERTY(laborHours(c)) { caption = 'Часов'; }
+                        MOVE PROPERTY(productionDays(c));
+                        MOVE PROPERTY(payroll(c));
+                        MOVE PROPERTY(consumablesSum(c));
+                        MOVE PROPERTY(taxSum(c));
+                        MOVE PROPERTY(laborSum(c)) { fontSize = 14; }
+                    }
+                }
+                }
+            }
+            NEW rightColumn {
+                width = 460;
+                NEW schemeBox {
+                    caption = 'Эскиз';
+                    alignment = STRETCH;
+                    height = 600;
+                    custom = 'TankScheme';
+                    MOVE PROPERTY(sDiameter);
+                    MOVE PROPERTY(sHeight);
+                    MOVE PROPERTY(sFloor);
+                    MOVE PROPERTY(sBottom);
+                    MOVE PROPERTY(sTop);
+                    MOVE PROPERTY(sApexTop);
+                    MOVE PROPERTY(sApexBottom);
+                    MOVE PROPERTY(sInsulation);
+                    MOVE PROPERTY(sInsTop);
+                    MOVE PROPERTY(sInsShell);
+                    MOVE PROPERTY(sInsBottom);
+                    MOVE PROPERTY(sCladTop);
+                    MOVE PROPERTY(sCladShell);
+                    MOVE PROPERTY(sCladBottom);
+                    MOVE PROPERTY(sPyramidal);
+                    MOVE PROPERTY(sLegDiameter);
+                    MOVE PROPERTY(sProtrude);
+                    MOVE PROPERTY(sLiquid);
+                    MOVE PROPERTY(sWork);
+                    MOVE PROPERTY(sTotal);
+                    MOVE PROPERTY(sBelts);
+                    MOVE PROPERTY(sBeltHeight);
+                    MOVE PROPERTY(sSeam);
+                    MOVE PROPERTY(sJacketArea);
+                }
+                NEW summary {
+                    caption = 'Ёмкость в целом';
+                    fill = 1;
+                    alignment = STRETCH;
+                    MOVE PROPERTY(totalVolume(c));
+                    MOVE PROPERTY(workingVolume(c));
+                    MOVE PROPERTY(lowerVolume(c));
+                    MOVE PROPERTY(liquidHeight(c));
+                    MOVE PROPERTY(totalHeight(c));
+                    MOVE PROPERTY(diagonal(c));
+                    MOVE PROPERTY(shellRatio(c));
+                    MOVE PROPERTY(liquidRatio(c));
+                    MOVE PROPERTY(totalWeight(c));
+                }
+                NEW calculationTotal {
+                    caption = 'Итог расчёта';
+                    alignment = STRETCH;
+                    MOVE PROPERTY(totalCost(c));
+                    MOVE PROPERTY(margin(c));
+                    MOVE PROPERTY(price(c)) { fontSize = 14; }
+                    MOVE PROPERTY(marginPercent(c));
+                    MOVE PROPERTY(marginPerHour(c));
+                    MOVE PROPERTY(createOffer(c)) { alignment = STRETCH; }
+                }
+            }
+        }
+    }
+}
+
+newCalculation (Lead l) + {
+    NEW c = VerticalTankCalculation {
+        lead(c) <- l;
+        SHOW verticalTankCalculation OBJECTS c = c WINDOW;
+    }
+}
