@@ -1,4 +1,6 @@
 MODULE AlfaExtra;
 
 REQUIRE MyCompanyExtra,
-        ManufacturingOrderActiveFilter;
+        ManufacturingOrderCanceledFilter,
+        ManufacturingOrderActiveFilter,
+        ManufacturingOrderResponsibleFilter;

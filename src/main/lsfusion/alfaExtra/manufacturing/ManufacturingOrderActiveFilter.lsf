@@ -1,8 +1,8 @@
 MODULE ManufacturingOrderActiveFilter;
 
-// ManufacturingOrderCanceled (через цепочку Done -> InProgress -> Ready -> Waiting) подключает все статусы заказа:
-// фильтр должен добавляться в группу status после них, иначе DEFAULT указывает на чужой пункт.
-REQUIRE ManufacturingOrderCanceled;
+// ManufacturingOrderCanceledFilter (через ManufacturingOrderCanceled и цепочку Done -> InProgress -> Ready -> Waiting)
+// подключает все пункты статусов заказа: фильтр должен добавляться в группу status после них, иначе DEFAULT указывает на чужой пункт.
+REQUIRE ManufacturingOrderCanceledFilter;
 
 // Фильтр «Активные» в списке производственных заказов: все заказы, кроме выполненных и отменённых.
 // opened — стандартный признак документа: статус не «закрывающий» (Выполнен, Отменён).

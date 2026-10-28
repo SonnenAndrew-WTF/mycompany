@@ -1,0 +1,13 @@
+MODULE ManufacturingOrderResponsibleFilter;
+
+// ManufacturingOrderFilter добавляет соседние фильтры правой панели: поле встаёт после них, под «Получателем».
+REQUIRE ManufacturingOrderFilter;
+
+// Фильтр «Ответственный» в списке производственных заказов: пока сотрудник не выбран, фильтр не действует.
+@defineDocFilter(manufacturingOrder, Employee, responsible, o, 'Ответственный');
+
+// Сотрудников немного, и платформа рисует выпадающий список без ввода текста.
+// Без элемента выбора поле становится полем ввода с подсказками по набранному тексту.
+DESIGN manufacturingOrders {
+    PROPERTY(nameManufacturingOrderResponsible()) { select = NULL; }
+}

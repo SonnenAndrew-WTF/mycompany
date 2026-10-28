@@ -1,0 +1,10 @@
+MODULE ManufacturingOrderCanceledFilter;
+
+REQUIRE ManufacturingOrderCanceled;
+
+// Пункт «Отменён» в фильтре по статусу списка производственных заказов — так же, как остальные статусы в upstream.
+// Модуль грузится до ManufacturingOrderActiveFilter, чтобы «Активные» оставался последним пунктом и выбирался по умолчанию.
+EXTEND FORM manufacturingOrders
+    EXTEND FILTERGROUP status
+        FILTER 'Отменён' status(o) = ManufacturingOrderStatus.canceled
+;
