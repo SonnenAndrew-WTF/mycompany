@@ -81,8 +81,16 @@ createCalculation 'Создать расчёт' (Lead l) {
 countCalculations (Lead l) = GROUP SUM 1 IF lead(LeadCalculation c) = l;
 
 // удаление из формы расчёта: после подтверждения расчёт удаляется и форма закрывается
+// строки, привязанные к расчёту: NONULL DELETE не удаляет новые, ещё не сохранённые строки,
+// поэтому их удаляют явно; модули блоков расчёта (работы и т.п.) дописывают свои строки
+deleteLines ABSTRACT LIST (LeadCalculation);
+deleteLines (LeadCalculation c) + {
+    DELETE LeadCalculationMaterial m WHERE calculation(m) = c;
+}
+
 deleteCalculation 'Удалить расчёт' (LeadCalculation c) {
     ASK 'Удалить расчёт № ' + STRING(number(c)) + '?' DO {
+        deleteLines(c);
         DELETE c;
         APPLY;
         IF NOT canceled() THEN formClose();

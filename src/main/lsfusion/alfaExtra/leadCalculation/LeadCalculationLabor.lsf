@@ -51,6 +51,10 @@ name 'Работа' = DATA ISTRING[200] (LeadCalculationOperation) CHARWIDTH 28;
 hours 'Часы' = DATA NUMERIC[10,2] (LeadCalculationOperation, LeadCalculationWorkType) TABLE leadCalculationOperationWorkType;
 hours 'Всего, ч' (LeadCalculationOperation o) = GROUP SUM hours(o, LeadCalculationWorkType t);
 
+deleteLines (LeadCalculation c) + {
+    DELETE LeadCalculationOperation o WHERE calculation(o) = c;
+}
+
 // новая работа встаёт в конец списка
 WHEN LOCAL SET(LeadCalculationOperation o IS LeadCalculationOperation) AND NOT CHANGED(index(o)) DO
     index(o) <- (GROUP MAX index(LeadCalculationOperation p) IF calculation(p) = calculation(o)) (+) 1;
