@@ -106,6 +106,17 @@ developedWidth 'Развёртка штрипса, мм' (TankStripProfile p) = 
     + 2 * profileMidHeight(p) / sinDegrees(60)
     - 2 * (profileRadius(p) + profileThickness(p) / 2) * (2 * tanDegrees(30) - pi() / 3), 0));
 
+// марки стали, которые подсказываются при вводе; можно ввести и любую другую
+CLASS TankSteelGrade 'Марка стали' {
+    aisi304 'AISI 304',
+    aisi321 'AISI 321',
+    aisi316 'AISI 316'
+}
+gradeName (TankSteelGrade g) = ISTRING[50](CASE
+    WHEN g = TankSteelGrade.aisi304 THEN r'AISI 304'
+    WHEN g = TankSteelGrade.aisi321 THEN r'AISI 321'
+    WHEN g = TankSteelGrade.aisi316 THEN r'AISI 316');
+
 CLASS TankInsulationType 'Тип изоляции' {
     rubber 'Вспененный каучук',
     mineralWool 'Минеральная вата'
@@ -143,7 +154,7 @@ subtractScrap 'Вычесть обрезки колбы из стоимости'
 // цены материалов (по умолчанию берутся из настроек при создании расчёта)
 steelPrice 'Цена стали корпуса, ₽/кг' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 legPipePrice 'Цена трубы на ноги, ₽/м' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
-legPrice 'Цена опоры ноги, ₽/шт' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
+legPrice 'Цена регулируемой опоры, ₽/шт' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 bracingPrice 'Цена расшивки ног, ₽/м' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 cladPrice 'Цена стали облицовки, ₽/кг' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 insulationPrice 'Цена изоляции, ₽/м²' = DATA NUMERIC[14,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
@@ -254,12 +265,14 @@ legDiameter (VerticalTankCalculation c) = diameter(legType(c));
 legWall 'Толщина стенки ноги, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 legProtrude 'Выступ ног за ёмкость, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
 legAdjustable 'Регулировка ног' = DATA BOOLEAN (VerticalTankCalculation) TABLE verticalTankCalculation;
-bracingPipe 'Труба расшивки ног' = DATA ISTRING[50] (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingDiameter 'Диаметр трубы расшивки, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingWall 'Толщина стенки расшивки, мм' = DATA NUMERIC[6,2] (VerticalTankCalculation) TABLE verticalTankCalculation;
 
 legLength 'Длина одной ноги, мм' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
 legPipeLength 'Труба на ноги, м' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
 legsWeight 'Вес ног, кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
 bracingLength 'Расшивка ног, м' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
+bracingWeight 'Вес расшивки, кг' = DATA INTEGER (VerticalTankCalculation) TABLE verticalTankCalculation;
 
 // ---- рубашка (лист ADMIN, блоки W и AA)
 jacketShellType = DATA TankJacketType (VerticalTankCalculation) TABLE verticalTankCalculation;
@@ -343,7 +356,7 @@ CONSTRAINT jacketConeType(VerticalTankCalculation c) = TankJacketType.strips CHE
 defaultSteelGrade 'Марка стали' = DATA ISTRING[50] ();
 defaultSteelPrice 'Цена стали корпуса, ₽/кг' = DATA NUMERIC[14,2] ();
 defaultLegPipePrice 'Цена трубы на ноги, ₽/м' = DATA NUMERIC[14,2] ();
-defaultLegPrice 'Цена опоры ноги, ₽/шт' = DATA NUMERIC[14,2] ();
+defaultLegPrice 'Цена регулируемой опоры, ₽/шт' = DATA NUMERIC[14,2] ();
 defaultBracingPrice 'Цена расшивки ног, ₽/м' = DATA NUMERIC[14,2] ();
 defaultCladPrice 'Цена стали облицовки, ₽/кг' = DATA NUMERIC[14,2] ();
 defaultInsulationPrice 'Цена изоляции, ₽/м²' = DATA NUMERIC[14,2] ();
@@ -358,6 +371,9 @@ WHEN LOCAL SET(VerticalTankCalculation c IS VerticalTankCalculation) DO {
     bracingPrice(c) <- defaultBracingPrice() WHERE NOT bracingPrice(c);
     cladPrice(c) <- defaultCladPrice() WHERE NOT cladPrice(c);
     insulationPrice(c) <- defaultInsulationPrice() WHERE NOT insulationPrice(c);
+
+    bracingDiameter(c) <- 57 WHERE NOT bracingDiameter(c);
+    bracingWall(c) <- 3 WHERE NOT bracingWall(c);
 
     surface(c) <- TankSurface.s2B WHERE NOT surface(c);
     coneFormat(c) <- TankShellFormat.sheet1500x3000 WHERE NOT coneFormat(c);
@@ -438,6 +454,8 @@ recalculate (VerticalTankCalculation c) + {
         WHEN legCount(c) = 4 THEN ceil(sqrt(sqr(DOUBLE(diameter(c))) / 2) * 4 / 6000) * 6
         WHEN legCount(c) = 5 THEN ceil(diameter(c) * sinDegrees(36) * 5 / 6000) * 6
         WHEN legCount(c) = 6 THEN ceil(diameter(c) / 2.0 * 6 / 6000) * 6);
+    // вес расшивки — как у ног: окружность трубы × длина × стенка × 8
+    bracingWeight(c) <- INTEGER(ceil(round(bracingDiameter(c) * pi() / 1000 * bracingLength(c) * bracingWall(c) * 8, 2)));
 
     // рубашка по колбе: пояса по диаметру ёмкости + 20 мм
     // штрипс: виток — по спирали на диаметре середины профиля (D + высота профиля), длина пояса = витки × виток
@@ -491,7 +509,7 @@ recalculate (VerticalTankCalculation c) + {
     liquidHeight(c) <- INTEGER(ceil(bottomConeFullHeight(c) + height(c) * workingPercent(c) / 100, 5));
     cladWeight(c) <- weight(c, TankCone.cladTop) (+) weight(c, TankCone.cladBottom) (+) weight(c, TankShell.cladShell);
     totalWeight(c) <- weight(c, TankShell.shell) (+) weight(c, TankCone.top) (+) weight(c, TankCone.bottom)
-                      (+) legsWeight(c) (+) jacketWeight(c) (+) cladWeight(c);
+                      (+) legsWeight(c) (+) bracingWeight(c) (+) jacketWeight(c) (+) cladWeight(c);
 }
 
 // при выборе штрипса подставляется типовой профиль
@@ -510,7 +528,7 @@ WHEN LOCAL (CHANGED(diameter(VerticalTankCalculation c)) OR CHANGED(height(c)) O
             OR CHANGED(cladThickness(c)) OR CHANGED(cladGrade(c)) OR CHANGED(cladSurface(c)) OR CHANGED(cladFormat(c))
             OR CHANGED(cladSubtractScrap(c))
             OR CHANGED(legCount(c)) OR CHANGED(legType(c)) OR CHANGED(legWall(c)) OR CHANGED(legProtrude(c))
-            OR CHANGED(legAdjustable(c)) OR CHANGED(bracingPipe(c))
+            OR CHANGED(legAdjustable(c)) OR CHANGED(bracingDiameter(c)) OR CHANGED(bracingWall(c))
             OR CHANGED(jacketShellType(c)) OR CHANGED(jacketConeType(c)) OR CHANGED(jacketThickness(c)) OR CHANGED(jacketGrade(c))
             OR CHANGED(jacketBeltHeight(c)) OR CHANGED(jacketBelts(c)) OR CHANGED(jacketOffset(c)) OR CHANGED(jacketConeHeight(c))
             OR CHANGED(stripProfile(c)) OR CHANGED(stripTurns(c)) OR CHANGED(stripPitch(c)))

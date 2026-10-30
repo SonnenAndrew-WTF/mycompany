@@ -27,9 +27,23 @@ onWebClientInit() + {
     onWebClientInit('tankScheme.js') <- 5;
 }
 
+// ---- марка стали: ввод с подсказкой из списка типовых марок, допускается любая своя
+changeDefaultSteelGrade () {
+    INPUT s = defaultSteelGrade() CHANGE LIST gradeName(TankSteelGrade g);
+}
+changeSteelGrade (VerticalTankCalculation c) {
+    INPUT s = steelGrade(c) CHANGE LIST gradeName(TankSteelGrade g);
+}
+changeJacketGrade (VerticalTankCalculation c) {
+    INPUT s = jacketGrade(c) CHANGE LIST gradeName(TankSteelGrade g);
+}
+changeCladGrade (VerticalTankCalculation c) {
+    INPUT s = cladGrade(c) CHANGE LIST gradeName(TankSteelGrade g);
+}
+
 // ---- настройки: значения по умолчанию для новых расчётов
 EXTEND FORM CRM.options
-    PROPERTIES() defaultSteelGrade, defaultSteelPrice, defaultLegPipePrice, defaultLegPrice, defaultBracingPrice,
+    PROPERTIES() defaultSteelGrade ON CHANGE changeDefaultSteelGrade(), defaultSteelPrice, defaultLegPipePrice, defaultLegPrice, defaultBracingPrice,
                  defaultCladPrice, defaultInsulationPrice
 ;
 
@@ -57,15 +71,19 @@ FORM verticalTankCalculation 'Расчёт вертикальной цилинд
     PROPERTIES(c) deleteCalculation
     PROPERTIES(c) dateTime, name, equipmentName, nameExecutor, captionStatus SELECT 'buttonGroup',
                   diameter, height, floorHeight, workingPercent,
-                  steelGrade, captionSurface, captionConeFormat, captionShellFormat, shellThickness, subtractScrap,
-                  legCount, captionLegType, legWall, legProtrude, legAdjustable, bracingPipe,
-                  captionJacketShellType, captionJacketConeType, jacketGrade,
+                  captionSurface, captionConeFormat, captionShellFormat, shellThickness, subtractScrap,
+                  legCount, captionLegType, legWall, legProtrude, legAdjustable, bracingDiameter, bracingWall,
+                  captionJacketShellType, captionJacketConeType,
                   jacketBelts, jacketOffset, jacketConeHeight,
                   captionInsulationType, insulationThickness, insulationLayers,
-                  cladThickness, cladGrade, captionCladSurface, captionCladFormat, cladSubtractScrap,
-                  steelPrice, cladPrice, legPipePrice, legPrice, bracingPrice, insulationPrice
+                  cladThickness, captionCladSurface, captionCladFormat, cladSubtractScrap,
+                  steelPrice, cladPrice, legPipePrice, bracingPrice, insulationPrice
+    PROPERTIES(c) steelGrade ON CHANGE changeSteelGrade(c), jacketGrade ON CHANGE changeJacketGrade(c),
+                  cladGrade ON CHANGE changeCladGrade(c)
+    // цена опоры нужна только регулируемым ногам
+    PROPERTIES(c) legPrice SHOWIF legAdjustable(c)
     // рассчитанные значения выделены фоном, поля ввода остаются белыми
-    PROPERTIES(c) READONLY BACKGROUND #E3EEF8 legLength, legPipeLength, legsWeight, bracingLength,
+    PROPERTIES(c) READONLY BACKGROUND #E3EEF8 legLength, legPipeLength, legsWeight, bracingLength, bracingWeight,
                            jacketBeltLength, jacketConeMax, jacketArea, jacketWeight,
                            insulationLayer, insulationBuy, cladWeight,
                            shellRatio, liquidRatio, totalHeight, diagonal,
@@ -249,11 +267,13 @@ DESIGN verticalTankCalculation {
                         MOVE PROPERTY(legWall(c)) { caption = 'Стенка ноги, мм'; charWidth = 7; }
                         MOVE PROPERTY(legProtrude(c)) { caption = 'Выступ ног, мм'; charWidth = 7; }
                         MOVE PROPERTY(legAdjustable(c));
-                        MOVE PROPERTY(bracingPipe(c)) { charWidth = 7; }
+                        MOVE PROPERTY(bracingDiameter(c)) { caption = 'Труба расшивки Ø, мм'; charWidth = 7; }
+                        MOVE PROPERTY(bracingWall(c)) { caption = 'Стенка расшивки, мм'; charWidth = 7; }
                         MOVE PROPERTY(legLength(c)) { charWidth = 7; }
                         MOVE PROPERTY(legPipeLength(c)) { caption = 'Труба на ноги, м'; charWidth = 7; }
                         MOVE PROPERTY(legsWeight(c)) { charWidth = 7; }
                         MOVE PROPERTY(bracingLength(c)) { charWidth = 7; }
+                        MOVE PROPERTY(bracingWeight(c)) { charWidth = 7; }
                     }
                     NEW jacketSection {
                         caption = 'Рубашка';
@@ -351,7 +371,7 @@ DESIGN verticalTankCalculation {
                         MOVE PROPERTY(steelPrice(c)) { caption = 'Сталь корпуса, ₽/кг'; charWidth = 7; }
                         MOVE PROPERTY(cladPrice(c)) { caption = 'Сталь облицовки, ₽/кг'; charWidth = 7; }
                         MOVE PROPERTY(legPipePrice(c)) { caption = 'Труба ног, ₽/м'; charWidth = 7; }
-                        MOVE PROPERTY(legPrice(c)) { caption = 'Опора ноги, ₽/шт'; charWidth = 7; }
+                        MOVE PROPERTY(legPrice(c)) { caption = 'Регулируемая опора, ₽/шт'; charWidth = 7; }
                         MOVE PROPERTY(bracingPrice(c)) { caption = 'Расшивка ног, ₽/м'; charWidth = 7; }
                         MOVE PROPERTY(insulationPrice(c)) { caption = 'Изоляция, ₽/м²'; charWidth = 7; }
                     }

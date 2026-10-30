@@ -66,7 +66,7 @@ materialName (VerticalTankCalculation c, TankPart p) = ISTRING[200](CASE
         (IF legPyramidal(c) THEN CONCAT ' ', 'Материал на пирамидальные ноги', steelGrade(c), 't=' + thicknessText(legWall(c)) + ' мм'
          ELSE CONCAT ' ', 'Труба ф' + STRING(legDiameter(c)) + r'х' + thicknessText(legWall(c)), steelGrade(c))
     WHEN p = TankPart.feet THEN (IF legAdjustable(c) THEN 'Опора регулируемая' ELSE 'Опора нерегулируемая (пята)')
-    WHEN p = TankPart.bracing THEN CONCAT ' ', 'Труба', bracingPipe(c), steelGrade(c)
+    WHEN p = TankPart.bracing THEN CONCAT ' ', 'Труба ф' + STRING(bracingDiameter(c)) + r'х' + thicknessText(bracingWall(c)), steelGrade(c)
     WHEN p = TankPart.shellScrap THEN 'Обрезки колбы (возврат)'
     WHEN p = TankPart.cladScrap THEN 'Обрезки облицовки колбы (возврат)')
     IF c IS VerticalTankCalculation;
@@ -75,7 +75,8 @@ materialPrice (VerticalTankCalculation c, TankPart p) = CASE
     WHEN p = TankPart.insulation THEN insulationPrice(c)
     WHEN p = TankPart.cladTop OR p = TankPart.cladShell OR p = TankPart.cladBottom OR p = TankPart.cladScrap THEN cladPrice(c)
     WHEN p = TankPart.legPipe THEN legPipePrice(c)
-    WHEN p = TankPart.feet THEN legPrice(c)
+    // цена есть только у регулируемой опоры; пята — без цены
+    WHEN p = TankPart.feet THEN legPrice(c) IF legAdjustable(c)
     WHEN p = TankPart.bracing THEN bracingPrice(c)
     WHEN p IS TankPart THEN steelPrice(c);
 
